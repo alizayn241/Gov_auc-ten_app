@@ -28,7 +28,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Future<void> _complete({required bool signup}) async {
     await ref.read(authViewModelProvider.notifier).completeOnboarding();
     if (!mounted) return;
-    context.go(signup ? '/signup' : '/login');
+    // context.go(signup ? '/signup' : '/login');
   }
 
   void _nextPage() {
