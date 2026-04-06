@@ -1,25 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/localization/app_localizations.dart';
 import 'core/localization/locale_controller.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_mode_controller.dart';
-import 'core/routing/app_router.dart';
-import 'core/constants/app_constants.dart';
-
-const supabaseUrl = 'https://ejdvmtotabwxnamzvdbe.supabase.co';
-const supabaseAnonKey = 'sb_publishable_m-nK4L8VJLQENZJHU-_3YQ_EkHHod0p';
+import 'features/staff/presentation/view/staff_approvals_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  await Supabase.initialize(
-    url: supabaseUrl,
-    anonKey: supabaseAnonKey,
-  );
 
   runApp(const ProviderScope(child: GovAuctionApp()));
 }
@@ -29,15 +19,14 @@ class GovAuctionApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final router = ref.watch(routerProvider);
     final themeMode = ref.watch(themeModeProvider);
     final locale = ref.watch(localeProvider);
 
-    return MaterialApp.router(
-      title: AppConstants.appName,
+    return MaterialApp(
+      title: 'Staff Feature',
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      routerConfig: router,
+      home: const StaffApprovalsScreen(),
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
       locale: locale,
