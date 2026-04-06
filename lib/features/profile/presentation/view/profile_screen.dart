@@ -160,7 +160,8 @@ class ProfileScreen extends ConsumerWidget {
               if (!auth.isAuthenticated)
                 _PrimaryButton(
                   text: l10n.login,
-                  onPressed: () => context.go('/login'),
+                  // onPressed: () => context.go('/login'),
+                  onPressed: () {},
                 )
               else
                 _PrimaryButton(
@@ -168,7 +169,7 @@ class ProfileScreen extends ConsumerWidget {
                   onPressed: () async {
                     await ref.read(authViewModelProvider.notifier).doLogout();
                     if (!context.mounted) return;
-                    context.go('/login');
+                    // context.go('/login');
                   },
                 ),
             ],
