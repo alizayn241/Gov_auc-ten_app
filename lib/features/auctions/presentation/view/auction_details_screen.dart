@@ -631,7 +631,8 @@ class _RightBidPanelState extends ConsumerState<_RightBidPanel> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: () => context.go('/login'),
+                  // onPressed: () => context.go('/login'),
+                  onPressed: () {},
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(52),
                     shape: RoundedRectangleBorder(

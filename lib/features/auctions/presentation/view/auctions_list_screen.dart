@@ -204,7 +204,7 @@ class _AuctionsListScreenState extends ConsumerState<AuctionsListScreen> {
                   timeLeft: timeLeft,
                   active: showActive,
                   endingSoon: showEndingSoon,
-                  onTap: () => context.go('/auction/${a.id}'),
+                  // onTap: () => context.go('/auction/${a.id}'),
                 );
               },
             ),
