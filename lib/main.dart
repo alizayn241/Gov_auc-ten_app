@@ -7,8 +7,7 @@ import 'core/localization/app_localizations.dart';
 import 'core/localization/locale_controller.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/theme_mode_controller.dart';
-import 'core/routing/app_router.dart';
-import 'core/constants/app_constants.dart';
+import 'features/auth/presentation/view/login_screen.dart';
 
 const supabaseUrl = 'https://ejdvmtotabwxnamzvdbe.supabase.co';
 const supabaseAnonKey = 'sb_publishable_m-nK4L8VJLQENZJHU-_3YQ_EkHHod0p';
@@ -29,15 +28,14 @@ class GovAuctionApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final router = ref.watch(routerProvider);
     final themeMode = ref.watch(themeModeProvider);
     final locale = ref.watch(localeProvider);
 
-    return MaterialApp.router(
-      title: AppConstants.appName,
+    return MaterialApp(
+      title: 'Auth Feature',
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-      routerConfig: router,
+      home: const LoginScreen(),
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
       locale: locale,
