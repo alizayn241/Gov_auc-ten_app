@@ -115,7 +115,7 @@ class _SubmitProposalScreenState
           'تم إرسال العرض بنجاح. الرقم: $proposalId',
         ),
       );
-      context.go('/tender/${widget.tenderId}/ranking');
+      // context.go('/tender/${widget.tenderId}/ranking');
     } catch (e) {
       final err = e.toString().replaceFirst('Exception: ', '');
       setState(() {

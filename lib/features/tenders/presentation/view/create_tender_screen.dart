@@ -215,7 +215,7 @@ class _CreateTenderScreenState extends State<CreateTenderScreen> {
           ),
         ),
       );
-      context.go('/admin/tenders');
+      // context.go('/admin/tenders');
     } catch (e) {
       setState(() {
         _message = e.toString().replaceFirst('Exception: ', '');
@@ -247,7 +247,7 @@ class _CreateTenderScreenState extends State<CreateTenderScreen> {
             if (context.canPop()) {
               context.pop();
             } else {
-              context.go('/admin/tenders');
+              // context.go('/admin/tenders');
             }
           },
         ),

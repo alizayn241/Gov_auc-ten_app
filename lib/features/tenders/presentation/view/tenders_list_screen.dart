@@ -84,7 +84,7 @@ class _TendersListScreenState extends ConsumerState<TendersListScreen> {
                   entity: t.entity ?? context.tr('Government entity', 'جهة حكومية'),
                   status: t.status,
                   deadline: t.submissionDeadline,
-                  onTap: () => context.go('/tender/${t.id}'),
+                  // onTap: () => context.go('/tender/${t.id}'),
                 ),
               ),
             ),

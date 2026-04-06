@@ -81,7 +81,8 @@ class _TenderDetailsScreenState extends ConsumerState<TenderDetailsScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
-                          onPressed: () => context.go('/login'),
+                          // onPressed: () => context.go('/login'),
+                          onPressed: () {},
                           icon: const Icon(Icons.login),
                           label: Text(context.tr('Login to Participate', 'سجل الدخول للمشاركة')),
                         ),
@@ -133,8 +134,9 @@ class _TenderDetailsScreenState extends ConsumerState<TenderDetailsScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: () =>
-                            context.go('/tender/${st.tender!.id}/ranking'),
+                        // onPressed: () =>
+                        //     context.go('/tender/${st.tender!.id}/ranking'),
+                        onPressed: () {},
                         icon: const Icon(Icons.leaderboard_outlined),
                         label: Text(context.tr('Lowest Offers Ranking', 'ترتيب أقل العروض')),
                       ),
@@ -146,7 +148,7 @@ class _TenderDetailsScreenState extends ConsumerState<TenderDetailsScreen> {
                         onPressed: auth.isAdmin ||
                                 !(st.participation?.eligible ?? false)
                             ? null
-                            : () => context.go('/tender/${st.tender!.id}/submit'),
+                            : () => {}, // context.go('/tender/${st.tender!.id}/submit'),
                         icon: const Icon(Icons.upload_file),
                         label: Text(context.tr('Submit Lowest Price Offer', 'تقديم أقل عرض سعر')),
                       ),
