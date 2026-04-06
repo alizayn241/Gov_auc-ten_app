@@ -36,7 +36,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _goToAuctions(String category) {
-    context.go('/auctions?category=$category');
+    // context.go('/auctions?category=$category');
   }
 
   void _submitSearch([String? rawQuery]) {
@@ -48,7 +48,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         if (query.isNotEmpty) 'search': query,
       },
     );
-    context.go(uri.toString());
+    // context.go(uri.toString());
   }
 
   void _openSearchSheet(BuildContext context) {
@@ -188,7 +188,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           IconButton(
             tooltip: context.tr('Tenders', 'المناقصات'),
             icon: const Icon(Icons.request_quote),
-            onPressed: () => context.go('/tenders'),
+            // onPressed: () => context.go('/tenders'),
+            onPressed: () {},
           ),
           IconButton(
             tooltip: context.tr('Notifications', 'الإشعارات'),
@@ -197,7 +198,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
             onPressed: () async {
               if (!auth.isAuthenticated) {
-                context.go('/login');
+                // context.go('/login');
                 return;
               }
               await context.push('/notifications');
@@ -210,7 +211,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               child: SizedBox(
                 height: isPhone ? 40 : 38,
                 child: FilledButton(
-                  onPressed: () => context.go('/login'),
+                  // onPressed: () => context.go('/login'),
+                  onPressed: () {},
                   style: FilledButton.styleFrom(
                     padding: EdgeInsets.symmetric(horizontal: isPhone ? 14 : 16),
                   ),
@@ -230,7 +232,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               onSearchTap: isPhone
                   ? () => _openSearchSheet(context)
                   : () => _submitSearch(),
-              onTendersTap: () => context.go('/tenders'),
+              // onTendersTap: () => context.go('/tenders'),
             ),
             const SizedBox(height: 14),
             Padding(
@@ -254,7 +256,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         ref.read(auctionsViewModelProvider.notifier).refresh(),
                   ),
                   TextButton.icon(
-                    onPressed: () => context.go('/auctions?category=All'),
+                    // onPressed: () => context.go('/auctions?category=All'),
+                    onPressed: () {},
                     icon: const Icon(Icons.arrow_forward),
                     label: Text(context.tr('View All', 'عرض الكل')),
                   ),
@@ -319,7 +322,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       width: isTablet ? 340 : 286,
                       child: _FeaturedAuctionCard(
                         auction: auction,
-                        onTap: () => context.go('/auction/${auction.id}'),
+                        // onTap: () => context.go('/auction/${auction.id}'),
                       ),
                     );
                   },
