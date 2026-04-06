@@ -1,0 +1,60 @@
+name: gov_auction_app
+description: Governmental Auction app (Flutter, MVVM, Riverpod)
+publish_to: "none"
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  flutter_riverpod: ^2.5.1
+  supabase_flutter: ^2.12.0
+  go_router: ^14.2.7
+  pdf: ^3.11.3
+  printing: ^5.14.2
+  fl_chart: ^1.1.0
+  intl: ^0.20.2
+  url_launcher: ^6.3.2
+  dio: ^5.7.0
+  pretty_dio_logger: ^1.4.0
+  image_picker: ^1.2.1
+  flutter_secure_storage: ^9.2.2
+  shared_preferences: ^2.3.2
+
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+  latlong2: ^0.9.1
+  flutter_map: ^8.2.2
+  cupertino_icons: ^1.0.8
+
+  # ✅ Added
+  lottie: ^3.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+  build_runner: ^2.4.12
+  json_serializable: ^6.8.0
+  freezed: ^2.5.7
+
+  mocktail: ^1.0.4
+
+flutter:
+  generate: true
+  uses-material-design: true
+
+  # ✅ Updated assets folders
+  assets:
+    - assets/images/logos/
+    - assets/images/logos/gov_logo.png
+    - assets/images/logos/logo.png
+    - assets/images/splash/
+    - assets/images/illustrations/
+    - assets/images/auctions/
+    - assets/images/icons/
