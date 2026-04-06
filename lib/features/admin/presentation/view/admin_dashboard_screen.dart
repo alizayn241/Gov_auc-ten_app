@@ -175,11 +175,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           tooltip: context.tr('Back', 'رجوع'),
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              context.go('/home');
-            }
+            // if (context.canPop()) {
+            //   context.pop();
+            // } else {
+            //   context.go('/home');
+            // }
           },
         ),
         actions: [
