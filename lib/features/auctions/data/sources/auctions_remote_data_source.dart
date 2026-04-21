@@ -86,7 +86,7 @@ class AuctionsAdminRemoteDataSource {
     required String auctionId,
     required String path,
     required String docType,
-    required String visibility,
+    required String visibility, String? createdBy,
   }) async {
     await sb.from('auction_documents').insert({
       'auction_id': auctionId,

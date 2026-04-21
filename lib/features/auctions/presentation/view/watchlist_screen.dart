@@ -86,6 +86,8 @@ class WatchlistScreen extends ConsumerWidget {
                           imagePath: a.images.isNotEmpty
                               ? a.images.first
                               : 'assets/images/auctions/auction_blue_01.jpg',
+                          status: a.status,
+                          endTime: a.endTime,
                           onOpen: () => context.push('/auction/${a.id}'),
                           onRemove: () async {
                             await vm.toggleWatch(a.id);
@@ -121,44 +123,72 @@ class _WatchlistHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF0B3C8C), Color(0xFF0A2F6E)],
+          colors: [Color(0xFF0B3C8C), Color(0xFF0A2F6E), Color(0xFF1E3A8A)],
         ),
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0B3C8C).withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Text(
-            context.tr('Saved for later', 'محفوظة لوقت لاحق'),
-            style: TextStyle(
-              color: Colors.white70,
-              fontWeight: FontWeight.w800,
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(20),
             ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            context.tr('Your favorite auctions, organized', 'مزاداتك المفضلة منظمة'),
-            style: TextStyle(
+            child: const Icon(
+              Icons.bookmark_border,
               color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.w900,
-              height: 1,
+              size: 32,
             ),
           ),
-          SizedBox(height: 10),
-          Text(
-            context.tr(
-              'Keep the auctions you care about in one place with a cleaner mobile browsing experience.',
-              'احتفظ بالمزادات التي تهمك في مكان واحد مع تجربة تصفح أوضح على الهاتف.',
-            ),
-            style: TextStyle(
-              color: Colors.white70,
-              height: 1.4,
+          const SizedBox(width: 20),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.tr('Saved for later', 'محفوظة لوقت لاحق'),
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  context.tr('Your favorite auctions, organized', 'مزاداتك المفضلة منظمة'),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  context.tr(
+                    'Keep the auctions you care about in one place with a cleaner mobile browsing experience.',
+                    'احتفظ بالمزادات التي تهمك في مكان واحد مع تجربة تصفح أوضح على الهاتف.',
+                  ),
+                  style: TextStyle(
+                    color: Colors.white70,
+                    height: 1.4,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -172,6 +202,8 @@ class _WatchlistCard extends StatelessWidget {
   final String location;
   final double amount;
   final String imagePath;
+  final String status;
+  final DateTime endTime;
   final VoidCallback onOpen;
   final Future<void> Function() onRemove;
 
@@ -180,6 +212,8 @@ class _WatchlistCard extends StatelessWidget {
     required this.location,
     required this.amount,
     required this.imagePath,
+    required this.status,
+    required this.endTime,
     required this.onOpen,
     required this.onRemove,
   });
@@ -187,44 +221,60 @@ class _WatchlistCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final remaining = endTime.difference(DateTime.now());
+    final isEnded = remaining.isNegative;
+    final statusText = isEnded ? 'Ended' : 'Active';
+    final statusColor = isEnded ? Colors.red : Colors.green;
+
     return InkWell(
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(24),
       onTap: onOpen,
       child: Card(
+        elevation: 4,
+        shadowColor: Colors.black.withOpacity(0.1),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+        ),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
           child: Row(
             children: [
               ClipRRect(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(18),
                 child: SizedBox(
-                  width: 90,
-                  height: 90,
+                  width: 100,
+                  height: 100,
                   child: AppImage(
                     imagePath: imagePath,
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => Container(
                       color: Colors.black12,
                       alignment: Alignment.center,
-                      child: const Icon(Icons.image, size: 20),
+                      child: const Icon(Icons.image, size: 24),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                        height: 1.15,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              height: 1.2,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     _MetaPill(
@@ -232,6 +282,21 @@ class _WatchlistCard extends StatelessWidget {
                       text: location,
                     ),
                     const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        _StatusPill(
+                          text: statusText,
+                          color: statusColor,
+                        ),
+                        if (!isEnded) ...[
+                          const SizedBox(width: 8),
+                          _TimePill(
+                            remaining: remaining,
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 12),
                     Text(
                       '${l10n.t('EGP', 'ج.م')} ${amount.toStringAsFixed(0)}',
                       style: const TextStyle(
@@ -243,10 +308,21 @@ class _WatchlistCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               IconButton(
                 tooltip: context.tr('Remove', 'إزالة'),
-                icon: const Icon(Icons.favorite, color: Colors.red),
+                icon: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.favorite,
+                    color: Colors.red,
+                    size: 20,
+                  ),
+                ),
                 onPressed: onRemove,
               ),
             ],
@@ -289,6 +365,68 @@ class _MetaPill extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  final String text;
+  final Color color;
+
+  const _StatusPill({
+    required this.text,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
+class _TimePill extends StatelessWidget {
+  final Duration remaining;
+
+  const _TimePill({
+    required this.remaining,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hours = remaining.inHours;
+    final minutes = remaining.inMinutes.remainder(60);
+    final timeText = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B3C8C).withOpacity(0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFF0B3C8C).withOpacity(0.3)),
+      ),
+      child: Text(
+        timeText,
+        style: const TextStyle(
+          color: Color(0xFF0B3C8C),
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
       ),
     );
   }

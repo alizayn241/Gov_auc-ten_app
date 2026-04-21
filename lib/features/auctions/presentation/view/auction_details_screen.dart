@@ -11,10 +11,14 @@ import 'package:gov_auction_app/core/theme/entry_flow_tokens.dart';
 import 'package:gov_auction_app/core/widgets/app_image.dart';
 import 'package:gov_auction_app/core/widgets/app_page_back_button.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../../core/realtime/supabase_realtime_service.dart';
+import '../../../../core/services/auction_automation_service.dart';
 import '../../data/models/auction.dart';
 import '../../data/models/bid.dart';
 import '../../../auth/presentation/viewmodel/auth_view_model.dart';
+import '../../../auth/presentation/viewmodel/auth_state.dart' as app_auth;
 import '../viewmodel/auctions_view_model.dart';
 
 class AuctionDetailsScreen extends ConsumerStatefulWidget {
@@ -40,17 +44,143 @@ class _AuctionDetailsScreenState extends ConsumerState<AuctionDetailsScreen> {
   List<Bid> _history = [];
   bool _historyLoading = true;
 
+  // Realtime channels
+  RealtimeChannel? _bidsChannel;
+  RealtimeChannel? _statusChannel;
+  RealtimeChannel? _notificationsChannel;
+  Timer? _finalizationTimer;
+
   @override
   void initState() {
     super.initState();
     final vm = ref.read(auctionsViewModelProvider.notifier);
+    final realtimeService = SupabaseRealtimeService(Supabase.instance.client);
+    final auth = ref.read(authViewModelProvider);
 
     _detailsFuture = vm.fetchDetails(widget.auctionId);
     _historyFuture = vm.fetchBidHistory(widget.auctionId);
+    _detailsFuture.then(_scheduleAuctionFinalizationCheck).catchError((_) {});
+
+    // Set up realtime listeners
+    _setupRealtimeListeners(realtimeService, auth);
+  }
+
+  Future<void> _checkExpiredAuctionsAndRefresh() async {
+    final automation = AuctionAutomationService(Supabase.instance.client);
+    final result = await automation.checkExpiredAuctions();
+    if (result['success'] != true) {
+      debugPrint('Auction expiry check failed: ${result['error']}');
+      return;
+    }
+
+    if (!mounted) return;
+    final vm = ref.read(auctionsViewModelProvider.notifier);
+    try {
+      final updatedAuction = await vm.fetchDetails(widget.auctionId);
+      final updatedHistory = await vm.fetchBidHistory(widget.auctionId);
+      if (!mounted) return;
+      setState(() {
+        _auction = updatedAuction;
+        _history = updatedHistory;
+        _historyLoading = false;
+        _detailsFuture = Future.value(updatedAuction);
+        _historyFuture = Future.value(updatedHistory);
+      });
+    } catch (e) {
+      debugPrint('Auction refresh after expiry failed: $e');
+    }
+  }
+
+  void _scheduleAuctionFinalizationCheck(Auction auction) {
+    _finalizationTimer?.cancel();
+
+    final remaining = auction.endTime.difference(DateTime.now());
+    if (!remaining.isNegative) {
+      _finalizationTimer = Timer(
+        remaining + const Duration(seconds: 1),
+        _checkExpiredAuctionsAndRefresh,
+      );
+      return;
+    }
+
+    unawaited(_checkExpiredAuctionsAndRefresh());
+  }
+
+  void _setupRealtimeListeners(SupabaseRealtimeService realtimeService, app_auth.AuthState auth) {
+    // Listen for new bids
+    _bidsChannel = realtimeService.watchBidsForAuction(
+      auctionId: widget.auctionId,
+      onChange: () => _refreshHistory(),
+    );
+
+    // Listen for auction status changes
+    _statusChannel = realtimeService.watchAuctionStatus(
+      auctionId: widget.auctionId,
+      onStatusChange: (newStatus) async {
+        if (!mounted) return;
+
+        // Refresh auction details when status changes
+        final vm = ref.read(auctionsViewModelProvider.notifier);
+        try {
+          final updatedAuction = await vm.fetchDetails(widget.auctionId);
+          if (mounted) {
+            setState(() => _auction = updatedAuction);
+          }
+
+          // Show notification for status change
+          _showStatusChangeNotification(newStatus);
+        } catch (e) {
+          // Handle error silently
+        }
+      },
+    );
+
+    // Listen for notifications if user is authenticated
+    if (auth.isAuthenticated && auth.userId != null) {
+      _notificationsChannel = realtimeService.watchNotifications(
+        userId: auth.userId!,
+        onNewNotification: () {
+          // Refresh notifications or show indicator
+          // This could trigger a notification badge update
+        },
+      );
+    }
+  }
+
+  void _showStatusChangeNotification(String newStatus) {
+    if (!mounted) return;
+
+    String message;
+    switch (newStatus) {
+      case 'finalized':
+        message = context.tr('This auction has been finalized!', 'تم إنهاء هذا المزاد!');
+        break;
+      case 'ended':
+        message = context.tr('This auction has ended.', 'انتهى هذا المزاد.');
+        break;
+      case 'cancelled':
+        message = context.tr('This auction has been cancelled.', 'تم إلغاء هذا المزاد.');
+        break;
+      default:
+        return; // Don't show notification for other status changes
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   @override
   void dispose() {
+    final realtimeService = SupabaseRealtimeService(Supabase.instance.client);
+    realtimeService.unsubscribe(_bidsChannel);
+    realtimeService.unsubscribe(_statusChannel);
+    realtimeService.unsubscribe(_notificationsChannel);
+    _finalizationTimer?.cancel();
+
     _bidController.dispose();
     super.dispose();
   }
@@ -78,7 +208,11 @@ class _AuctionDetailsScreenState extends ConsumerState<AuctionDetailsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        leading: const AppPageBackButton(fallbackRoute: '/auctions'),
+        leading: IconButton(
+          tooltip: context.tr('Back', 'رجوع'),
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.go('/home'),
+        ),
         title: Text(context.tr('Auction Details', 'تفاصيل المزاد')),
       ),
       body: SafeArea(
@@ -631,8 +765,7 @@ class _RightBidPanelState extends ConsumerState<_RightBidPanel> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  // onPressed: () => context.go('/login'),
-                  onPressed: () {},
+                  onPressed: () => context.go('/login'),
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(52),
                     shape: RoundedRectangleBorder(

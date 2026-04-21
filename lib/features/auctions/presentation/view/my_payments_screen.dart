@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:gov_auction_app/core/localization/app_localizations.dart';
+import 'package:gov_auction_app/core/services/auction_automation_service.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -19,6 +20,21 @@ class _MyPaymentsScreenState extends State<MyPaymentsScreen> {
   List<_InvoiceViewData> _items = const [];
 
   final _remote = AuctionsAdminRemoteDataSource(Supabase.instance.client);
+  late final AuctionAutomationService _automation;
+
+  @override
+  void initState() {
+    super.initState();
+    _automation = AuctionAutomationService(Supabase.instance.client);
+    _load();
+  }
+
+  Future<void> _runAuctionExpiryCheck() async {
+    final result = await _automation.checkExpiredAuctions();
+    if (result['success'] != true) {
+      debugPrint('Auction expiry check failed: ${result['error']}');
+    }
+  }
 
   Future<void> _load() async {
     setState(() {
@@ -31,6 +47,8 @@ class _MyPaymentsScreenState extends State<MyPaymentsScreen> {
       if (uid == null) {
         throw Exception('Please login first');
       }
+
+      await _runAuctionExpiryCheck();
 
       final invoiceRows = await Supabase.instance.client
           .from('invoices')
@@ -121,12 +139,6 @@ class _MyPaymentsScreenState extends State<MyPaymentsScreen> {
         _loading = false;
       });
     }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
   }
 
   Future<void> _openPaySheet(_InvoiceViewData invoice) async {
@@ -283,16 +295,16 @@ class _MyPaymentsScreenState extends State<MyPaymentsScreen> {
                                   Navigator.pop(context);
                                   await _load();
                                   if (!mounted) return;
-                                  ScaffoldMessenger.of(this.context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        context.tr(
-                                          'Payment submitted successfully',
-                                          'تم إرسال الدفع بنجاح',
-                                        ),
-                                      ),
-                                    ),
+                                  final uri = Uri(
+                                    path: '/payment/success',
+                                    queryParameters: {
+                                      'title': invoice.title,
+                                      'amount': 'EGP ' + amount.toStringAsFixed(0),
+                                      'reference': reference,
+                                      'kind': invoice.isTender ? 'tender' : 'auction',
+                                    },
                                   );
+                                  this.context.push(uri.toString());
                                 } catch (e) {
                                   if (!mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(
@@ -524,8 +536,11 @@ class _InvoiceViewData {
           ? (tender?['entity'] ?? tender?['reference_no'] ?? 'Tender')
               .toString()
           : (auction?['category'] ?? 'Auction').toString(),
-      total: (invoice['total'] as num?)?.toDouble() ?? 0,
-      invoiceStatus: (invoice['status'] ?? 'unpaid').toString(),
+      total:
+          (invoice['total'] as num?)?.toDouble() ??
+          (invoice['amount'] as num?)?.toDouble() ??
+          0,
+      invoiceStatus: _normalizeInvoiceStatus(invoice['status']),
       dueAt: DateTime.tryParse((invoice['due_at'] ?? '').toString())?.toLocal(),
       payments: payments,
     );
@@ -547,6 +562,19 @@ class _InvoiceViewData {
     final mm = d.month.toString().padLeft(2, '0');
     final dd = d.day.toString().padLeft(2, '0');
     return '${d.year}-$mm-$dd';
+  }
+
+  static String _normalizeInvoiceStatus(dynamic rawStatus) {
+    final status = (rawStatus ?? '').toString().trim().toLowerCase();
+    switch (status) {
+      case 'pending':
+      case 'awaiting_payment':
+        return 'unpaid';
+      case '':
+        return 'unpaid';
+      default:
+        return status;
+    }
   }
 }
 

@@ -19,6 +19,7 @@ import '../../features/auctions/presentation/view/auction_details_screen.dart';
 import '../../features/auctions/presentation/view/watchlist_screen.dart';
 import '../../features/auctions/presentation/view/my_bids_screen.dart';
 import '../../features/auctions/presentation/view/my_payments_screen.dart';
+import '../../features/auctions/presentation/view/payment_success_screen.dart';
 
 import '../../features/chat/presentation/view/chat_screen.dart';
 
@@ -218,6 +219,16 @@ GoRoute(
   builder: (context, state) =>
       ConfirmPaymentScreen(auctionId: state.pathParameters['id']!),
 ),
+GoRoute(
+  path: '/payment/success',
+  parentNavigatorKey: _rootNavigatorKey,
+  builder: (context, state) => PaymentSuccessScreen(
+    title: state.uri.queryParameters['title'] ?? 'Invoice',
+    amountLabel: state.uri.queryParameters['amount'] ?? '',
+    reference: state.uri.queryParameters['reference'],
+    isTender: state.uri.queryParameters['kind'] == 'tender',
+  ),
+),
       // ✅ Staff
       GoRoute(
         path: '/staff/approvals',
@@ -297,8 +308,18 @@ GoRoute(
       final wantsWatchlist = loc.startsWith('/watchlist');
       final wantsMyBids = loc.startsWith('/my-bids');
       final wantsUserPayments = loc.startsWith('/my-payments');
+      final adminAuctionPaymentMatch = RegExp(r'^/admin/auctions/([^/]+)/payment$')
+          .firstMatch(loc);
+      final adminTenderPaymentMatch = RegExp(r'^/admin/tenders/([^/]+)/payment$')
+          .firstMatch(loc);
 
       if (wantsAdmin && role != 'admin') return '/profile';
+      if (adminAuctionPaymentMatch != null) {
+        return '/admin/auctions/${adminAuctionPaymentMatch.group(1)!}/manage';
+      }
+      if (adminTenderPaymentMatch != null) {
+        return '/admin/tenders/${adminTenderPaymentMatch.group(1)!}/award';
+      }
 
       // ✅ admin يستطيع دخول staff routes
       if (wantsStaff && !(role == 'staff' || role == 'admin')) return '/profile';
