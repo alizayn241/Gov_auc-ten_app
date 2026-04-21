@@ -12,6 +12,8 @@ import '../../features/onboarding/presentation/view/onboarding_screen.dart';
 
 import '../../features/home/presentation/view/home_screen.dart';
 import '../../features/profile/presentation/view/profile_screen.dart';
+import '../../features/profile/presentation/view/account_screen.dart';
+import '../../features/profile/presentation/view/help_support_screen.dart';
 import '../../features/notifications/presentation/view/notifications_screen.dart';
 
 import '../../features/auctions/presentation/view/auctions_list_screen.dart';
@@ -242,6 +244,14 @@ GoRoute(
           GoRoute(
             path: '/notifications',
             builder: (_, __) => const NotificationsScreen(),
+          ),
+          GoRoute(
+            path: '/profile/account',
+            builder: (_, __) => const AccountScreen(),
+          ),
+          GoRoute(
+            path: '/profile/help',
+            builder: (_, __) => const HelpSupportScreen(),
           ),
           GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
           GoRoute(
