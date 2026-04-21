@@ -4,6 +4,12 @@ import 'package:gov_auction_app/core/localization/app_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../auctions/data/sources/auctions_admin_remote_data_source.dart';
+import 'processes/processes_app_bar.dart';
+import 'processes/processes_cards.dart';
+import 'processes/processes_filters.dart';
+import 'processes/processes_hero.dart';
+import 'processes/processes_models.dart';
+import 'shared/admin_shared.dart';
 
 class AdminProcessesScreen extends StatefulWidget {
   const AdminProcessesScreen({super.key});
@@ -12,21 +18,44 @@ class AdminProcessesScreen extends StatefulWidget {
   State<AdminProcessesScreen> createState() => _AdminProcessesScreenState();
 }
 
-class _AdminProcessesScreenState extends State<AdminProcessesScreen> {
+class _AdminProcessesScreenState extends State<AdminProcessesScreen>
+    with SingleTickerProviderStateMixin {
   String _type = 'All';
-  String _creatorFilter = 'All';
+  String _lifecycle = 'Active';
+  String _creator = 'All';
 
   bool _loading = true;
   String? _error;
-  List<_ProcessItem> _items = const [];
+  List<AdminProcessItem> _items = const [];
 
   late final AuctionsAdminRemoteDataSource _remote;
+  late final AnimationController _animCtrl;
+  late final Animation<double> _heroAnim;
+  late final Animation<double> _bodyAnim;
 
   @override
   void initState() {
     super.initState();
     _remote = AuctionsAdminRemoteDataSource(Supabase.instance.client);
+    _animCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _heroAnim = CurvedAnimation(
+      parent: _animCtrl,
+      curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+    );
+    _bodyAnim = CurvedAnimation(
+      parent: _animCtrl,
+      curve: const Interval(0.35, 1.0, curve: Curves.easeOut),
+    );
     _load();
+  }
+
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -36,56 +65,57 @@ class _AdminProcessesScreenState extends State<AdminProcessesScreen> {
     });
 
     try {
+      final sb = Supabase.instance.client;
       final results = await Future.wait([
-        Supabase.instance.client
+        sb
             .from('auctions')
             .select(
               'id,title,category,start_price,start_date,end_time,status,created_by,created_at',
             )
             .order('created_at', ascending: false),
-        Supabase.instance.client
+        sb
             .from('tenders')
             .select('id,title,entity,status,submission_deadline,created_at')
             .order('created_at', ascending: false),
-        Supabase.instance.client
-            .from('profiles')
-            .select('*'),
+        sb.from('profiles').select('*'),
       ]);
 
       final profileRows = (results[2] as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
+          .map((entry) => Map<String, dynamic>.from(entry as Map))
           .toList();
       final profileMap = {
         for (final row in profileRows)
-          (row['id'] ?? '').toString(): _ProfileMini.fromMap(row),
+          (row['id'] ?? '').toString(): AdminProfileMini.fromMap(row),
       };
 
-      final auctionItems = (results[0] as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .map((row) => _ProcessItem.fromAuction(row, profileMap))
+      final auctions = (results[0] as List)
+          .map((entry) => Map<String, dynamic>.from(entry as Map))
+          .map((row) => AdminProcessItem.fromAuction(row, profileMap))
           .toList();
 
-      final tenderItems = (results[1] as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .map(_ProcessItem.fromTender)
+      final tenders = (results[1] as List)
+          .map((entry) => Map<String, dynamic>.from(entry as Map))
+          .map(AdminProcessItem.fromTender)
           .toList();
 
       if (!mounted) return;
+
       setState(() {
-        _items = [...auctionItems, ...tenderItems]
+        _items = [...auctions, ...tenders]
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
         _loading = false;
       });
-    } catch (e) {
+      _animCtrl.forward(from: 0);
+    } catch (error) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = error.toString().replaceFirst('Exception: ', '');
         _loading = false;
       });
     }
   }
 
-  Future<void> _publishAuction(_ProcessItem item) async {
+  Future<void> _publishAuction(AdminProcessItem item) async {
     if (item.type != 'Auction') return;
 
     setState(() => _loading = true);
@@ -93,507 +123,152 @@ class _AdminProcessesScreenState extends State<AdminProcessesScreen> {
       await _remote.publishAuction(item.id);
       await _load();
       if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            context.tr('Auction "${item.title}" published', 'تم نشر المزاد "${item.title}"'),
+            context.tr(
+              'Auction "${item.title}" published',
+              'تم نشر المزاد "${item.title}"',
+            ),
           ),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       );
-    } catch (e) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = error.toString().replaceFirst('Exception: ', '');
         _loading = false;
       });
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final filtered = _items.where((p) {
-      if (_type != 'All' && p.type != _type) return false;
-      if (_creatorFilter == 'Staff only' &&
-          p.creatorRole.toLowerCase() != 'staff') {
+  List<AdminProcessItem> get _filtered {
+    return _items.where((process) {
+      if (_type != 'All' && process.type != _type) return false;
+      if (_lifecycle == 'Active' && process.isCompleted) return false;
+      if (_lifecycle == 'Completed' && !process.isCompleted) return false;
+      if (_creator == 'Staff only' &&
+          process.creatorRole.toLowerCase() != 'staff') {
         return false;
       }
       return true;
     }).toList();
+  }
+
+  int get _auctionCount => _items.where((process) => process.type == 'Auction').length;
+  int get _tenderCount => _items.where((process) => process.type == 'Tender').length;
+  int get _pendingCount => _items.where((process) => process.canPublish).length;
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filtered;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(context.tr('Processes', 'العمليات')),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.canPop() ? context.pop() : context.go('/home'),
-        ),
-        actions: [
-          IconButton(
-            tooltip: context.tr('Refresh', 'تحديث'),
-            icon: const Icon(Icons.refresh),
-            onPressed: _load,
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: CustomScrollView(
+        slivers: [
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: ProcessesAppBar(
+              onBack: () => context.canPop() ? context.pop() : context.go('/home'),
+              onRefresh: _load,
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: FadeTransition(
+              opacity: _heroAnim,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.12),
+                  end: Offset.zero,
+                ).animate(_heroAnim),
+                child: ProcessesHero(
+                  auctionCount: _auctionCount,
+                  tenderCount: _tenderCount,
+                  pendingCount: _pendingCount,
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: FadeTransition(
+              opacity: _bodyAnim,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 16),
+                    ProcessesFilterChips(
+                      type: _type,
+                      lifecycle: _lifecycle,
+                      creator: _creator,
+                      onType: (value) => setState(() => _type = value),
+                      onLifecycle: (value) => setState(() => _lifecycle = value),
+                      onCreator: (value) => setState(() => _creator = value),
+                    ),
+                    const SizedBox(height: 10),
+                    if (_loading)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 40),
+                        child: Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    else if (_error != null)
+                      AdminErrorCard(message: _error!, onRetry: _load)
+                    else if (filtered.isEmpty)
+                      AdminEmptyCard(
+                        icon: Icons.find_in_page_rounded,
+                        title: context.tr('No processes found', 'لا توجد عمليات'),
+                        subtitle: context.tr(
+                          'Try adjusting the filters above.',
+                          'جرّب تغيير عوامل التصفية أعلاه.',
+                        ),
+                      )
+                    else ...[
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Text(
+                          context.tr(
+                            '${filtered.length} processes',
+                            '${filtered.length} عملية',
+                          ),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                        ),
+                      ),
+                      ...filtered.map((process) {
+                        return ProcessCard(
+                          process: process,
+                          onPublish: process.type == 'Auction' && process.canPublish
+                              ? () => _publishAuction(process)
+                              : null,
+                          onManage: process.type == 'Auction' && !process.isCompleted
+                              ? () => context.push('/admin/auctions/${process.id}/manage')
+                              : null,
+                          onOpen: process.type == 'Tender'
+                              ? () => context.push('/admin/tenders/${process.id}/award')
+                              : null,
+                          onParticipants: process.type == 'Auction'
+                              ? () => context.push('/admin/auctions/${process.id}/participants')
+                              : null,
+                        );
+                      }),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _FiltersBar(
-            type: _type,
-            creatorFilter: _creatorFilter,
-            onTypeChanged: (v) => setState(() => _type = v),
-            onCreatorChanged: (v) => setState(() => _creatorFilter = v),
-          ),
-          const SizedBox(height: 12),
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.only(top: 32),
-              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            )
-          else if (_error != null)
-            _ErrorCard(message: _error!, onRetry: _load)
-          else if (filtered.isEmpty)
-            _EmptyState(
-              title: context.tr('No processes found', 'لا توجد عمليات'),
-              subtitle: context.tr(
-                'Create an auction or change the filters.',
-                'أنشئ مزاداً أو غيّر عوامل التصفية.',
-              ),
-              icon: Icons.find_in_page_outlined,
-            )
-          else ...[
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Text(
-                '${filtered.length} processes',
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-            ),
-            ...filtered.map(
-              (p) => _ProcessCard(
-                p: p,
-                onPublish: p.type == 'Auction' && p.canPublish
-                    ? () => _publishAuction(p)
-                    : null,
-              ),
-            ),
-          ],
-        ],
-      ),
     );
-  }
-}
-
-class _FiltersBar extends StatelessWidget {
-  final String type;
-  final String creatorFilter;
-  final ValueChanged<String> onTypeChanged;
-  final ValueChanged<String> onCreatorChanged;
-
-  const _FiltersBar({
-    required this.type,
-    required this.creatorFilter,
-    required this.onTypeChanged,
-    required this.onCreatorChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Wrap(
-          runSpacing: 10,
-          spacing: 14,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.filter_list),
-                const SizedBox(width: 8),
-                const Text('Type:'),
-                const SizedBox(width: 8),
-                DropdownButton<String>(
-                  value: type,
-                  items: const [
-                    DropdownMenuItem(value: 'All', child: Text('All')),
-                    DropdownMenuItem(value: 'Auction', child: Text('Auction')),
-                    DropdownMenuItem(value: 'Tender', child: Text('Tender')),
-                  ],
-                  onChanged: (v) => onTypeChanged(v ?? 'All'),
-                ),
-              ],
-            ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('Creator:'),
-                const SizedBox(width: 8),
-                DropdownButton<String>(
-                  value: creatorFilter,
-                  items: const [
-                    DropdownMenuItem(value: 'All', child: Text('All')),
-                    DropdownMenuItem(
-                      value: 'Staff only',
-                      child: Text('Staff only'),
-                    ),
-                  ],
-                  onChanged: (v) => onCreatorChanged(v ?? 'All'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ProcessCard extends StatelessWidget {
-  final _ProcessItem p;
-  final VoidCallback? onPublish;
-
-  const _ProcessCard({required this.p, required this.onPublish});
-
-  void _openPrimary(BuildContext context) {
-    if (p.type == 'Tender') {
-      context.push('/admin/tenders/${p.id}/award');
-      return;
-    }
-    context.push('/admin/auctions/${p.id}/manage');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _Chip(text: p.type, kind: 'type'),
-                        _Chip(text: p.statusLabel, kind: 'status'),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      '#${p.id}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                        color: cs.onSurfaceVariant,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                p.title,
-                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                p.meta,
-                style: TextStyle(color: cs.onSurfaceVariant),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Created by: ${p.creatorLabel}',
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  SizedBox(
-                    width: 150,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _openPrimary(context),
-                      icon: const Icon(Icons.edit_outlined),
-                      label: Text(p.type == 'Auction' ? 'Manage' : 'Open'),
-                    ),
-                  ),
-                  if (p.type == 'Auction')
-                    SizedBox(
-                      width: 170,
-                      child: OutlinedButton.icon(
-                        onPressed: () =>
-                            context.push('/admin/auctions/${p.id}/participants'),
-                        icon: const Icon(Icons.how_to_reg_outlined),
-                        label: Text(context.tr('Review Participants', 'مراجعة المشاركين')),
-                      ),
-                    ),
-                  if (onPublish != null)
-                    SizedBox(
-                      width: 130,
-                      child: FilledButton.icon(
-                        onPressed: onPublish,
-                        icon: const Icon(Icons.publish_outlined),
-                        label: Text(context.tr('Confirm', 'تأكيد')),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  final String text;
-  final String kind;
-
-  const _Chip({required this.text, required this.kind});
-
-  @override
-  Widget build(BuildContext context) {
-    final lower = text.toLowerCase();
-    final cs = Theme.of(context).colorScheme;
-    final color = switch (kind) {
-      'type' => const Color(0xFF0B3C8C),
-      _ when lower == 'draft' => const Color(0xFF7A5D00),
-      _ when lower == 'published' || lower == 'active' => Colors.green,
-      _ when lower == 'ended' || lower == 'closed' => cs.onSurfaceVariant,
-      _ => Colors.deepOrange,
-    };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withOpacity(.10),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: color,
-          fontWeight: FontWeight.w800,
-          fontSize: 12,
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorCard extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-
-  const _ErrorCard({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.red, size: 36),
-            const SizedBox(height: 10),
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 10),
-            FilledButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh),
-              label: Text(context.tr('Retry', 'إعادة المحاولة')),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final IconData icon;
-
-  const _EmptyState({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: primary.withOpacity(.10),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Icon(icon, color: primary, size: 28),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-            ),
-            const SizedBox(height: 6),
-                Text(
-                  subtitle,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ProfileMini {
-  final String name;
-  final String email;
-  final String role;
-
-  const _ProfileMini({
-    required this.name,
-    required this.email,
-    required this.role,
-  });
-
-  factory _ProfileMini.fromMap(Map<String, dynamic> map) {
-    final resolvedName = _firstNonEmpty([
-      map['display_name'],
-      map['name'],
-      map['full_name'],
-      map['username'],
-      map['id'],
-    ]);
-
-    return _ProfileMini(
-      name: resolvedName,
-      email: '',
-      role: (map['role'] ?? 'citizen').toString(),
-    );
-  }
-
-  static String _firstNonEmpty(List<dynamic> values) {
-    for (final value in values) {
-      final text = (value ?? '').toString().trim();
-      if (text.isNotEmpty) return text;
-    }
-    return '';
-  }
-}
-
-class _ProcessItem {
-  final String id;
-  final String type;
-  final String status;
-  final String title;
-  final String meta;
-  final DateTime createdAt;
-  final String creatorLabel;
-  final String creatorRole;
-
-  const _ProcessItem({
-    required this.id,
-    required this.type,
-    required this.status,
-    required this.title,
-    required this.meta,
-    required this.createdAt,
-    required this.creatorLabel,
-    required this.creatorRole,
-  });
-
-  factory _ProcessItem.fromAuction(
-    Map<String, dynamic> map,
-    Map<String, _ProfileMini> profiles,
-  ) {
-    final creatorId = (map['created_by'] ?? '').toString();
-    final creator = profiles[creatorId];
-    final startDate = _fmtDate(map['start_date']);
-    final endDate = _fmtDate(map['end_time']);
-    final category = (map['category'] ?? 'Other').toString();
-    final price = _toDouble(map['start_price']).toStringAsFixed(0);
-
-    return _ProcessItem(
-      id: (map['id'] ?? '').toString(),
-      type: 'Auction',
-      status: (map['status'] ?? 'draft').toString(),
-      title: (map['title'] ?? '').toString(),
-      meta: '$category • Start: $startDate • End: $endDate • Min: EGP $price',
-      createdAt: _parseDate(map['created_at']),
-      creatorLabel: creator == null
-          ? 'Unknown user'
-          : (creator.name.isEmpty ? 'Unknown user' : creator.name),
-      creatorRole: creator?.role ?? '',
-    );
-  }
-
-  factory _ProcessItem.fromTender(Map<String, dynamic> map) {
-    final deadline = _fmtDate(map['submission_deadline']);
-    return _ProcessItem(
-      id: (map['id'] ?? '').toString(),
-      type: 'Tender',
-      status: (map['status'] ?? 'draft').toString(),
-      title: (map['title'] ?? '').toString(),
-      meta: '${(map['entity'] ?? 'Government').toString()} • Deadline: $deadline',
-      createdAt: _parseDate(map['created_at']),
-      creatorLabel: 'Tender workflow',
-      creatorRole: '',
-    );
-  }
-
-  String get statusLabel => status.isEmpty ? 'draft' : status;
-
-  bool get canPublish {
-    final lower = status.toLowerCase();
-    return lower == 'draft' || lower == 'pending';
-  }
-
-  static DateTime _parseDate(dynamic value) {
-    return DateTime.tryParse((value ?? '').toString())?.toLocal() ??
-        DateTime.fromMillisecondsSinceEpoch(0);
-  }
-
-  static String _fmtDate(dynamic value) {
-    final d = DateTime.tryParse((value ?? '').toString())?.toLocal();
-    if (d == null) return '-';
-    final mm = d.month.toString().padLeft(2, '0');
-    final dd = d.day.toString().padLeft(2, '0');
-    final hh = d.hour.toString().padLeft(2, '0');
-    final min = d.minute.toString().padLeft(2, '0');
-    return '${d.year}-$mm-$dd $hh:$min';
-  }
-
-  static double _toDouble(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse((value ?? '').toString()) ?? 0;
   }
 }

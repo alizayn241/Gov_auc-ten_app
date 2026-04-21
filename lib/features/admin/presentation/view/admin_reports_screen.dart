@@ -7,6 +7,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../data/models/admin_reports_model.dart';
 import '../utils/admin_reports_pdf.dart';
+import 'reports/reports_app_bar.dart';
+import 'reports/reports_hero.dart';
+import 'reports/reports_panels.dart';
+import 'shared/admin_shared.dart';
 
 class AdminReportsScreen extends StatefulWidget {
   const AdminReportsScreen({super.key});
@@ -15,7 +19,8 @@ class AdminReportsScreen extends StatefulWidget {
   State<AdminReportsScreen> createState() => _AdminReportsScreenState();
 }
 
-class _AdminReportsScreenState extends State<AdminReportsScreen> {
+class _AdminReportsScreenState extends State<AdminReportsScreen>
+    with SingleTickerProviderStateMixin {
   DateTimeRange _range = DateTimeRange(
     start: DateTime.now().subtract(const Duration(days: 6)),
     end: DateTime.now(),
@@ -25,17 +30,39 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
   String? _error;
   AdminReportsSummary? _data;
 
+  late final AnimationController _animCtrl;
+  late final Animation<double> _heroAnim;
+  late final Animation<double> _bodyAnim;
+
   @override
   void initState() {
     super.initState();
+    _animCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 750),
+    );
+    _heroAnim = CurvedAnimation(
+      parent: _animCtrl,
+      curve: const Interval(0.0, 0.45, curve: Curves.easeOut),
+    );
+    _bodyAnim = CurvedAnimation(
+      parent: _animCtrl,
+      curve: const Interval(0.35, 1.0, curve: Curves.easeOut),
+    );
     _loadReports();
   }
 
-  String _yyyyMmDd(DateTime d) {
-    final y = d.year.toString().padLeft(4, '0');
-    final m = d.month.toString().padLeft(2, '0');
-    final day = d.day.toString().padLeft(2, '0');
-    return '$y-$m-$day';
+  @override
+  void dispose() {
+    _animCtrl.dispose();
+    super.dispose();
+  }
+
+  String _yyyyMmDd(DateTime date) {
+    final year = date.year.toString().padLeft(4, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '$year-$month-$day';
   }
 
   Future<void> _loadReports() async {
@@ -46,13 +73,10 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
     try {
       final client = Supabase.instance.client;
- 
-final user = client.auth.currentUser;
-debugPrint('SUPABASE USER: ${user?.id} | ${user?.email}');
-if (user == null) {
-  throw Exception('Not logged in to Supabase');
-}
-      final res = await client.rpc(
+      final user = client.auth.currentUser;
+      if (user == null) throw Exception('Not logged in');
+
+      final result = await client.rpc(
         'get_admin_reports_summary',
         params: {
           'from_date': _yyyyMmDd(_range.start),
@@ -60,16 +84,20 @@ if (user == null) {
         },
       );
 
-      final map = Map<String, dynamic>.from(res as Map);
-      final parsed = AdminReportsSummary.fromJson(map);
+      final parsed = AdminReportsSummary.fromJson(
+        Map<String, dynamic>.from(result as Map),
+      );
 
+      if (!mounted) return;
       setState(() {
         _data = parsed;
         _loading = false;
       });
-    } catch (e) {
+      _animCtrl.forward(from: 0);
+    } catch (error) {
+      if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = error.toString().replaceFirst('Exception: ', '');
         _loading = false;
       });
     }
@@ -83,314 +111,141 @@ if (user == null) {
       lastDate: DateTime(now.year, now.month, now.day),
       initialDateRange: _range,
     );
-    if (picked == null) return;
 
+    if (picked == null) return;
     setState(() => _range = picked);
     await _loadReports();
   }
 
   Future<void> _exportPdf() async {
-    final data = _data;
-    if (data == null) return;
-
+    if (_data == null) return;
     final doc = await AdminReportsPdf.build(
-      data: data,
+      data: _data!,
       from: _range.start,
       to: _range.end,
     );
+    await Printing.layoutPdf(onLayout: (_) async => doc.save());
+  }
 
-    await Printing.layoutPdf(
-      onLayout: (_) async => doc.save(),
-    );
+  BidsByDayPoint? get _peakBidDay {
+    final data = _data;
+    if (data == null || data.bidsByDay.isEmpty) return null;
+    return data.bidsByDay.reduce((a, b) => a.count >= b.count ? a : b);
+  }
+
+  CategoryAmountPoint? get _topCategory {
+    final data = _data;
+    if (data == null || data.revenueByCategory.isEmpty) return null;
+    return data.revenueByCategory.reduce((a, b) => a.amount >= b.amount ? a : b);
+  }
+
+  double get _avgBidsPerDay {
+    final data = _data;
+    if (data == null) return 0;
+    return data.bidsCount / (_range.duration.inDays + 1);
   }
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    final df = DateFormat('yyyy-MM-dd');
-
-    // ✅ fallback values if data not loaded yet
-    final auctionsValue =
-        _data == null ? '—' : '${_data!.activeAuctions} Active';
-    final bidsValue = _data == null ? '—' : '${_data!.bidsCount} Bids';
-    final paymentsValue = _data == null
-        ? '—'
-        : 'EGP ${_data!.paymentsTotal.toStringAsFixed(0)}';
-    final usersValue =
-        '—'; // لو تحب نضيفها لاحقًا من RPC (newUsers)
+    final dateFormat = DateFormat('yyyy-MM-dd');
+    final data = _data;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(context.tr('Reports', 'التقارير')),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              context.go('/home');
-            }
-          },
-        ),
-        actions: [
-          IconButton(
-            tooltip: context.tr('Date Range', 'النطاق الزمني'),
-            icon: const Icon(Icons.date_range),
-            onPressed: _pickRange,
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: CustomScrollView(
+        slivers: [
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: ReportsAppBar(
+              onBack: () => context.canPop() ? context.pop() : context.go('/home'),
+              onPickRange: _pickRange,
+              onRefresh: _loadReports,
+              onExport: (data == null || _loading) ? null : _exportPdf,
+            ),
           ),
-          IconButton(
-            tooltip: context.tr('Refresh', 'تحديث'),
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadReports,
-          ),
-          IconButton(
-            tooltip: context.tr('Export PDF', 'تصدير PDF'),
-            icon: const Icon(Icons.picture_as_pdf),
-            onPressed: (_data == null || _loading) ? null : _exportPdf,
-          ),
-          const SizedBox(width: 6),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // ✅ Date Range card
-          InkWell(
-            borderRadius: BorderRadius.circular(14),
-            onTap: _pickRange,
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(
-                  children: [
-                    Icon(Icons.date_range, color: primary),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Date Range: ${df.format(_range.start)} → ${df.format(_range.end)}',
-                        style: const TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                    ),
-                    const Icon(Icons.chevron_right),
-                  ],
+          SliverToBoxAdapter(
+            child: FadeTransition(
+              opacity: _heroAnim,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.12),
+                  end: Offset.zero,
+                ).animate(_heroAnim),
+                child: ReportsHero(
+                  rangeLabel:
+                      '${dateFormat.format(_range.start)} - ${dateFormat.format(_range.end)}',
+                  onPickRange: _pickRange,
+                  loading: _loading,
                 ),
               ),
             ),
           ),
-
-          const SizedBox(height: 10),
-
-          if (_loading) const LinearProgressIndicator(),
-
-          if (_error != null) ...[
-            const SizedBox(height: 10),
-            Card(
+          SliverToBoxAdapter(
+            child: FadeTransition(
+              opacity: _bodyAnim,
               child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error_outline, color: Colors.red),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-
-          const SizedBox(height: 12),
-
-          _ReportCard(
-            icon: Icons.gavel,
-            title: 'Auctions Report',
-            subtitle: 'Overview of all active and closed auctions',
-            value: auctionsValue,
-            color: primary,
-          ),
-          const SizedBox(height: 12),
-
-          _ReportCard(
-            icon: Icons.history,
-            title: 'Bids Report',
-            subtitle: 'Total bids in selected date range',
-            value: bidsValue,
-            color: Colors.deepPurple,
-          ),
-          const SizedBox(height: 12),
-
-          _ReportCard(
-            icon: Icons.payments,
-            title: 'Revenue Report',
-            subtitle: 'Total payments processed (selected range)',
-            value: paymentsValue,
-            color: Colors.green,
-          ),
-          const SizedBox(height: 12),
-
-          _ReportCard(
-            icon: Icons.people,
-            title: 'Users Activity',
-            subtitle: 'New users and engagement metrics (optional)',
-            value: usersValue,
-            color: Colors.orange,
-          ),
-
-          const SizedBox(height: 14),
-
-          if (_data != null) ...[
-            const Text(
-              'Details',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 8),
-
-            // ✅ Bid history mini table preview
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Bids By Day (preview)',
-                      style: TextStyle(fontWeight: FontWeight.w900),
+                    const SizedBox(height: 16),
+                    InsightStrip(
+                      daysInRange: _range.duration.inDays + 1,
+                      peakBidDay: _peakBidDay == null
+                          ? context.tr('No bid activity', 'لا يوجد نشاط')
+                          : '${dateFormat.format(_peakBidDay!.date)} · ${_peakBidDay!.count}',
+                      topCategory: _topCategory?.category.isNotEmpty == true
+                          ? _topCategory!.category
+                          : context.tr('None yet', 'لا توجد بعد'),
+                      avgBidsPerDay: _avgBidsPerDay,
                     ),
-                    const SizedBox(height: 10),
-                    if (_data!.bidsByDay.isEmpty)
-                      Text(
-                        'No bids in this range.',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    const SizedBox(height: 14),
+                    if (_loading)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 10),
+                        child: LinearProgressIndicator(minHeight: 3),
+                      ),
+                    if (_error != null) ...[
+                      AdminErrorCard(message: _error!, onRetry: _loadReports),
+                      const SizedBox(height: 14),
+                    ],
+                    if (data != null) ...[
+                      AdminSectionLabel(
+                        label: context.tr('Key metrics', 'المؤشرات الرئيسية'),
+                      ),
+                      const SizedBox(height: 10),
+                      MetricGrid(data: data, avgBidsPerDay: _avgBidsPerDay),
+                      const SizedBox(height: 20),
+                      AdminSectionLabel(
+                        label: context.tr('Bids by day', 'العطاءات حسب اليوم'),
+                      ),
+                      const SizedBox(height: 10),
+                      BidsByDayPanel(data: data, dateFormat: dateFormat),
+                      const SizedBox(height: 16),
+                      AdminSectionLabel(
+                        label: context.tr('Revenue by category', 'الإيراد حسب الفئة'),
+                      ),
+                      const SizedBox(height: 10),
+                      RevenueByCategoryPanel(data: data),
+                    ] else if (!_loading && _error == null) ...[
+                      AdminEmptyCard(
+                        icon: Icons.analytics_rounded,
+                        title: context.tr(
+                          'No report data yet',
+                          'لا توجد بيانات تقارير بعد',
                         ),
-                      )
-                    else
-                      ..._data!.bidsByDay.take(6).map((p) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Row(
-                            children: [
-                              Expanded(child: Text(df.format(p.date))),
-                              Text(
-                                p.count.toString(),
-                                style: const TextStyle(fontWeight: FontWeight.w900),
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
+                        subtitle: context.tr(
+                          'Try another date range or refresh.',
+                          'جرّب نطاقا آخر أو حدّث التقرير.',
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
             ),
-
-            const SizedBox(height: 12),
-
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Revenue By Category (preview)',
-                      style: TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                    const SizedBox(height: 10),
-                    if (_data!.revenueByCategory.isEmpty)
-                      Text(
-                        'No category data.',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      )
-                    else
-                      ..._data!.revenueByCategory.take(6).map((c) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Row(
-                            children: [
-                              Expanded(child: Text(c.category)),
-                              Text(
-                                'EGP ${c.amount.toStringAsFixed(0)}',
-                                style: const TextStyle(fontWeight: FontWeight.w900),
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                  ],
-                ),
-              ),
-            ),
-          ],
+          ),
         ],
-      ),
-    );
-  }
-}
-
-class _ReportCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String value;
-  final Color color;
-
-  const _ReportCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.value,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: color.withOpacity(.12),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(icon, color: color),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(color: cs.onSurfaceVariant),
-                  ),
-                ],
-              ),
-            ),
-            Text(
-              value,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            )
-          ],
-        ),
       ),
     );
   }

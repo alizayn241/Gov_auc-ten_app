@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:gov_auction_app/core/widgets/app_page_back_button.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'contracts/contracts_models.dart';
+import 'contracts/contracts_widgets.dart';
+import 'shared/admin_shared.dart';
 
 class AdminContractsScreen extends StatefulWidget {
   const AdminContractsScreen({super.key});
@@ -12,7 +16,7 @@ class AdminContractsScreen extends StatefulWidget {
 class _AdminContractsScreenState extends State<AdminContractsScreen> {
   bool loading = true;
   String? error;
-  List<Map<String, dynamic>> rows = const [];
+  List<ContractRow> rows = const [];
 
   @override
   void initState() {
@@ -32,11 +36,15 @@ class _AdminContractsScreenState extends State<AdminContractsScreen> {
           .select('id,tender_id,vendor_id,contract_value,status,created_at')
           .order('created_at', ascending: false);
 
+      if (!mounted) return;
       setState(() {
-        rows = (res as List).map((e) => Map<String, dynamic>.from(e)).toList();
+        rows = (res as List)
+            .map((row) => ContractRow.fromMap(Map<String, dynamic>.from(row)))
+            .toList();
         loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         error = e.toString().replaceFirst('Exception: ', '');
         loading = false;
@@ -44,22 +52,12 @@ class _AdminContractsScreenState extends State<AdminContractsScreen> {
     }
   }
 
-  String _fmt(dynamic v) {
-    if (v == null) return '-';
-    final dt = DateTime.tryParse(v.toString());
-    return dt?.toLocal().toString() ?? v.toString();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Admin • Contracts'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.canPop() ? context.pop() : context.go('/admin'),
-        ),
+        leading: const AppPageBackButton(fallbackRoute: '/admin'),
         actions: [
           IconButton(
             tooltip: 'Refresh',
@@ -72,71 +70,32 @@ class _AdminContractsScreenState extends State<AdminContractsScreen> {
       body: loading
           ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
           : error != null
-              ? Center(child: Text(error!))
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: AdminErrorCard(message: error!, onRetry: _load),
+                  ),
+                )
               : rows.isEmpty
-                  ? const Center(child: Text('No contracts yet'))
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: AdminEmptyCard(
+                          icon: Icons.description_outlined,
+                          title: 'No contracts yet',
+                          subtitle:
+                              'Generated contracts will appear here once tender award flows are completed.',
+                        ),
+                      ),
+                    )
                   : ListView.separated(
                       padding: const EdgeInsets.all(12),
                       itemCount: rows.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, i) {
-                        final c = rows[i];
-                        return Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        'Contract #${c["id"]}',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(fontWeight: FontWeight.w900),
-                                      ),
-                                    ),
-                                    _Chip(text: (c['status'] ?? '').toString()),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text('Tender: ${c["tender_id"]}',
-                                    style: TextStyle(color: cs.onSurfaceVariant)),
-                                Text('Vendor: ${c["vendor_id"]}',
-                                    style: TextStyle(color: cs.onSurfaceVariant)),
-                                const SizedBox(height: 6),
-                                Text(
-                                  'Value: ${c["contract_value"]}',
-                                  style: const TextStyle(fontWeight: FontWeight.w900),
-                                ),
-                                const SizedBox(height: 6),
-                                Text('Created: ${_fmt(c["created_at"])}',
-                                    style: TextStyle(color: cs.onSurfaceVariant)),
-                              ],
-                            ),
-                          ),
-                        );
+                      itemBuilder: (context, index) {
+                        return ContractCard(contract: rows[index]);
                       },
                     ),
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  final String text;
-  const _Chip({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(text, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
     );
   }
 }
