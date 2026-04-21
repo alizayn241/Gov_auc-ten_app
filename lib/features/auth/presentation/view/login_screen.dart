@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gov_auction_app/core/theme/entry_flow_tokens.dart';
+import 'package:gov_auction_app/features/auth/presentation/widgets/auth_form_theme.dart';
+import 'package:gov_auction_app/features/auth/presentation/widgets/auth_ui.dart';
 import 'package:gov_auction_app/features/onboarding/presentation/widgets/entry_background.dart';
 
 import '../../../../core/localization/app_localizations.dart';
@@ -55,10 +57,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
     final state = ref.watch(authViewModelProvider);
     final size = MediaQuery.sizeOf(context);
     final isPhone = size.width < 600;
-    final panelColor = EntryFlowTokens.panel;
-    final inputFill = EntryFlowTokens.inputFill;
-    final inputBorder = EntryFlowTokens.inputBorder;
-
     final fade = CurvedAnimation(
       parent: _intro,
       curve: Curves.easeOutCubic,
@@ -105,7 +103,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                       children: [
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: _AuthHero(
+                          child: AuthHero(
                             eyebrow: l10n.governmentAuctionPortal,
                             title: l10n.welcomeBack,
                             subtitle: l10n.loginHeroSubtitle,
@@ -113,51 +111,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                           ),
                         ),
                         const SizedBox(height: 18),
-                        Container(
-                          decoration: BoxDecoration(
-                            color: panelColor,
-                            borderRadius: BorderRadius.circular(28),
-                            border: Border.all(color: Colors.white.withOpacity(.08)),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(.22),
-                                blurRadius: 28,
-                                offset: Offset(0, 18),
-                              ),
-                            ],
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                            child: Theme(
+                        AuthPanel(
+                          child: Theme(
                               data: Theme.of(context).copyWith(
-                                inputDecorationTheme: InputDecorationTheme(
-                                  filled: true,
-                                  fillColor: inputFill,
-                                  labelStyle: const TextStyle(
-                                    color: EntryFlowTokens.textMuted,
-                                  ),
-                                  prefixIconColor: EntryFlowTokens.textMuted,
-                                  suffixIconColor: EntryFlowTokens.textMuted,
-                                  enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: BorderSide(color: inputBorder),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(
-                                      color: EntryFlowTokens.accent,
-                                      width: 1.4,
-                                    ),
-                                  ),
-                                  errorBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFFC25A5A)),
-                                  ),
-                                  focusedErrorBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFFC25A5A)),
-                                  ),
-                                ),
+                                inputDecorationTheme: AuthFormTheme.inputDecorationTheme(),
                               ),
                               child: Form(
                                 key: _formKey,
@@ -184,6 +141,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                                   TextFormField(
                                     controller: _email,
                                     keyboardType: TextInputType.emailAddress,
+                                    style: AuthFormTheme.inputTextStyle,
+                                    cursorColor: Colors.white,
                                     decoration: InputDecoration(
                                       labelText: l10n.emailAddress,
                                       prefixIcon: const Icon(Icons.alternate_email),
@@ -199,6 +158,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                                   TextFormField(
                                     controller: _password,
                                     obscureText: _obscure,
+                                    style: AuthFormTheme.inputTextStyle,
+                                    cursorColor: Colors.white,
                                     decoration: InputDecoration(
                                       labelText: l10n.password,
                                       prefixIcon: const Icon(Icons.lock_outline),
@@ -256,29 +217,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                                     ),
                                     const SizedBox(height: 14),
                                   ],
-                                  Container(
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF132742),
-                                      borderRadius: BorderRadius.circular(18),
-                                      border: Border.all(color: inputBorder),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        const Icon(Icons.shield_outlined, color: EntryFlowTokens.accent),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Text(
-                                            l10n.secureSignInNote,
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                              color: EntryFlowTokens.textMuted,
-                                              height: 1.3,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                                  AuthInfoCard(
+                                    icon: Icons.shield_outlined,
+                                    message: l10n.secureSignInNote,
                                   ),
                                   const SizedBox(height: 16),
                                   SizedBox(
@@ -325,7 +266,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                               ),
                             ),
                             ),
-                          ),
                         ),
                       ],
                     ),
@@ -336,64 +276,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
           ),
         ],
       ),
-    );
-  }
-}
-
-class _AuthHero extends StatelessWidget {
-  final String eyebrow;
-  final String title;
-  final String subtitle;
-  final bool compact;
-
-  const _AuthHero({
-    required this.eyebrow,
-    required this.title,
-    required this.subtitle,
-    required this.compact,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: const Color(0x1FFFFFFF),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Colors.white.withOpacity(.08)),
-          ),
-          child: Text(
-            eyebrow,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
-              letterSpacing: .3,
-            ),
-          ),
-        ),
-        SizedBox(height: compact ? 14 : 18),
-        Text(
-          title,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: compact ? 34 : 40,
-            fontWeight: FontWeight.w900,
-            height: 1,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          subtitle,
-          style: TextStyle(
-            color: EntryFlowTokens.textMuted,
-            fontSize: compact ? 14 : 15,
-            height: 1.45,
-          ),
-        ),
-      ],
     );
   }
 }

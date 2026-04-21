@@ -15,32 +15,131 @@ class FinalizeAuctionScreen extends StatefulWidget {
 
 class _FinalizeAuctionScreenState extends State<FinalizeAuctionScreen> {
   bool _loading = false;
+  bool _loadingSummary = true;
   String? _error;
   _FinalizeResult? _result;
+  String? _winnerName;
+  int _bidCount = 0;
+  String? _auctionStatus;
 
   final _remote = AuctionsAdminRemoteDataSource(Supabase.instance.client);
 
+  @override
+  void initState() {
+    super.initState();
+    _loadSummary();
+  }
+
+  Future<void> _loadSummary() async {
+    setState(() {
+      _loadingSummary = true;
+      _error = null;
+    });
+
+    try {
+      final auction = await Supabase.instance.client
+          .from('auctions')
+          .select('status')
+          .eq('id', widget.auctionId)
+          .single();
+
+      final bids = await Supabase.instance.client
+          .from('bids')
+          .select('id')
+          .eq('auction_id', widget.auctionId);
+
+      if (!mounted) return;
+      setState(() {
+        _auctionStatus = (auction['status'] ?? '').toString();
+        _bidCount = (bids as List).length;
+        _loadingSummary = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingSummary = false;
+      });
+    }
+  }
+
   Future<void> _finalize() async {
+    if (_bidCount == 0) {
+      setState(() {
+        _error = context.tr(
+          'This auction cannot be finalized yet because no bids have been placed.',
+          'لا يمكن إنهاء هذا المزاد بعد لأنه لا توجد أي مزايدات مسجلة.',
+        );
+        _result = null;
+      });
+      return;
+    }
+
     setState(() {
       _loading = true;
       _error = null;
       _result = null;
+      _winnerName = null;
     });
 
     try {
       final res = await _remote.finalizeAuction(widget.auctionId);
+      final result = _FinalizeResult.fromMap(res);
+      final winnerName = await _loadWinnerName(result.winnerUserId);
       if (!mounted) return;
       setState(() {
-        _result = _FinalizeResult.fromMap(res);
+        _result = result;
+        _winnerName = winnerName;
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
+      final message = e.toString().replaceFirst('Exception: ', '');
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = message.contains('no bids')
+            ? context.tr(
+                'This auction has no bids yet, so the system cannot select a winner or create an invoice.',
+                'هذا المزاد لا يحتوي على مزايدات بعد، لذلك لا يمكن للنظام اختيار فائز أو إنشاء فاتورة.',
+              )
+            : message;
         _loading = false;
       });
     }
+  }
+
+  Future<String?> _loadWinnerName(String userId) async {
+    if (userId.trim().isEmpty) return null;
+
+    try {
+      final adminUsers = await Supabase.instance.client.rpc('admin_list_users');
+      if (adminUsers is List) {
+        for (final row in adminUsers) {
+          final map = Map<String, dynamic>.from(row as Map);
+          final id = ((map['user_id'] ?? map['id']) ?? '').toString();
+          if (id != userId) continue;
+          final displayName = (map['display_name'] ?? map['name'] ?? '')
+              .toString()
+              .trim();
+          if (displayName.isNotEmpty) return displayName;
+        }
+      }
+    } catch (_) {
+      // Fall back to public profiles if the admin RPC is unavailable.
+    }
+
+    try {
+      final profile = await Supabase.instance.client
+          .from('profiles')
+          .select('display_name')
+          .eq('id', userId)
+          .maybeSingle();
+
+      final displayName = (profile?['display_name'] ?? '').toString().trim();
+      if (displayName.isNotEmpty) return displayName;
+    } catch (_) {
+      // Keep the user id as fallback.
+    }
+
+    return null;
   }
 
   @override
@@ -123,11 +222,65 @@ class _FinalizeAuctionScreenState extends State<FinalizeAuctionScreen> {
                     ),
                     style: TextStyle(color: Colors.black54),
                   ),
+                  const SizedBox(height: 12),
+                  if (_loadingSummary)
+                    const LinearProgressIndicator(minHeight: 3)
+                  else ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: _bidCount > 0
+                            ? Colors.green.withOpacity(.08)
+                            : Colors.orange.withOpacity(.10),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: _bidCount > 0
+                              ? Colors.green.withOpacity(.25)
+                              : Colors.orange.withOpacity(.35),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            context.tr(
+                              'Current status: ${_auctionStatus ?? '-'}',
+                              'الحالة الحالية: ${_auctionStatus ?? '-'}',
+                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            context.tr(
+                              'Recorded bids: $_bidCount',
+                              'عدد المزايدات المسجلة: $_bidCount',
+                            ),
+                          ),
+                          if (_bidCount == 0) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              context.tr(
+                                'Place at least one bid before finalizing this auction.',
+                                'يجب تسجيل مزايدة واحدة على الأقل قبل إنهاء هذا المزاد.',
+                              ),
+                              style: TextStyle(
+                                color: Colors.orange.shade900,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
-                      onPressed: _loading ? null : _finalize,
+                      onPressed: _loading || _loadingSummary || _bidCount == 0
+                          ? null
+                          : _finalize,
                       icon: _loading
                           ? const SizedBox(
                               width: 18,
@@ -175,7 +328,9 @@ class _FinalizeAuctionScreenState extends State<FinalizeAuctionScreen> {
                     const SizedBox(height: 12),
                     _ResultRow(
                       label: context.tr('Winner User', 'المستخدم الفائز'),
-                      value: _result!.winnerUserId,
+                      value: _winnerName?.isNotEmpty == true
+                          ? '${_winnerName!} (${_result!.winnerUserId})'
+                          : _result!.winnerUserId,
                     ),
                     _ResultRow(
                       label: context.tr('Winning Bid', 'المزايدة الفائزة'),
@@ -201,11 +356,9 @@ class _FinalizeAuctionScreenState extends State<FinalizeAuctionScreen> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: FilledButton.icon(
-                            onPressed: () => context.push(
-                              '/admin/auctions/${widget.auctionId}/payment',
-                            ),
+                            onPressed: null,
                             icon: const Icon(Icons.payments_outlined),
-                            label: Text(context.tr('Go to Payment', 'الانتقال إلى الدفع')),
+                            label: Text(context.tr('User Pays From My Payments', 'المستخدم يدفع من مدفوعاتي')),
                           ),
                         ),
                       ],

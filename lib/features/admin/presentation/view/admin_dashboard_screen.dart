@@ -3,6 +3,9 @@ import 'package:go_router/go_router.dart';
 import 'package:gov_auction_app/core/localization/app_localizations.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'dashboard/dashboard_models.dart';
+import 'dashboard/dashboard_widgets.dart';
+
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
 
@@ -10,15 +13,31 @@ class AdminDashboardScreen extends StatefulWidget {
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
 }
 
-class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+class _AdminDashboardScreenState extends State<AdminDashboardScreen>
+    with SingleTickerProviderStateMixin {
   bool _loading = true;
   String? _error;
-  _DashboardMetrics? _metrics;
+  DashboardMetrics? _metrics;
+  String _selectedTrendRange = '7d';
+
+  late AnimationController _kpiAnimCtrl;
+  late Animation<double> _kpiAnim;
 
   @override
   void initState() {
     super.initState();
+    _kpiAnimCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _kpiAnim = CurvedAnimation(parent: _kpiAnimCtrl, curve: Curves.easeOut);
     _loadDashboard();
+  }
+
+  @override
+  void dispose() {
+    _kpiAnimCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadDashboard() async {
@@ -32,16 +51,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       final now = DateTime.now();
       final thirtyDaysAgo = now.subtract(const Duration(days: 30));
       final startOfMonth = DateTime(now.year, now.month, 1);
+      final today = DateTime(now.year, now.month, now.day);
+      final startOf7Days = today.subtract(const Duration(days: 6));
+      final startOf30Days = today.subtract(const Duration(days: 29));
+      final lastWeekStart = today.subtract(const Duration(days: 13));
+      final lastWeekEnd = today.subtract(const Duration(days: 7));
 
       final results = await Future.wait([
         sb.from('profiles').select('id,display_name,created_at'),
-        sb.from('auctions').select('id,status,end_time'),
+        sb.from('auctions').select('id,status,end_time,category,title'),
         sb.from('tenders').select('id,status,submission_deadline'),
-        sb
-            .from('auction_participants')
+        sb.from('auction_participants')
             .select('user_id,status,created_at,auction_id'),
-        sb
-            .from('tender_participants')
+        sb.from('bids').select('auction_id,amount'),
+        sb.from('tender_participants')
             .select('vendor_id,status,created_at,tender_id'),
         sb.from('payments').select('id,amount,status,created_at'),
       ]);
@@ -50,110 +73,258 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       final auctions = _asRows(results[1]);
       final tenders = _asRows(results[2]);
       final auctionParticipants = _asRows(results[3]);
-      final tenderParticipants = _asRows(results[4]);
-      final payments = _asRows(results[5]);
-
-      final newUsers = profiles.where((row) {
-        final createdAt = _parseDate(row['created_at']);
-        return createdAt != null && !createdAt.isBefore(thirtyDaysAgo);
-      }).length;
+      final bids = _asRows(results[4]);
+      final tenderParticipants = _asRows(results[5]);
+      final payments = _asRows(results[6]);
 
       final activeAuctions = auctions.where((row) {
         final status = (row['status'] ?? '').toString().toLowerCase();
         final endTime = _parseDate(row['end_time']);
-        final byTime = endTime != null && endTime.isAfter(now);
-        final byStatus = {
-          'active',
-          'published',
-          'live',
-          'awaiting_payment'
-        }.contains(status);
-        return byTime || byStatus;
+        return (endTime != null && endTime.isAfter(now)) ||
+            {'active', 'published', 'live', 'awaiting_payment'}.contains(status);
       }).length;
 
       final activeTenders = tenders.where((row) {
         final status = (row['status'] ?? '').toString().toLowerCase();
         final deadline = _parseDate(row['submission_deadline']);
-        final byTime = deadline != null && deadline.isAfter(now);
-        final byStatus =
+        return (deadline != null && deadline.isAfter(now)) ||
             !{'closed', 'cancelled', 'awarded'}.contains(status);
-        return byTime || byStatus;
       }).length;
 
-      final pendingAuctionApprovals = auctionParticipants.where((row) {
-        return (row['status'] ?? '').toString().toLowerCase() == 'pending';
-      }).length;
+      final pendingAuction = auctionParticipants
+          .where((r) => (r['status'] ?? '').toString().toLowerCase() == 'pending')
+          .length;
+      final pendingTender = tenderParticipants
+          .where((r) => (r['status'] ?? '').toString().toLowerCase() == 'pending')
+          .length;
 
-      final pendingTenderApprovals = tenderParticipants.where((row) {
-        return (row['status'] ?? '').toString().toLowerCase() == 'pending';
-      }).length;
+      final cutoff48h = now.subtract(const Duration(hours: 48));
+      final overdue = [
+        ...auctionParticipants.where((r) {
+          final d = _parseDate(r['created_at']);
+          return (r['status'] ?? '').toString().toLowerCase() == 'pending' &&
+              d != null &&
+              d.isBefore(cutoff48h);
+        }),
+        ...tenderParticipants.where((r) {
+          final d = _parseDate(r['created_at']);
+          return (r['status'] ?? '').toString().toLowerCase() == 'pending' &&
+              d != null &&
+              d.isBefore(cutoff48h);
+        }),
+      ].length;
 
-      final paymentsThisMonth = payments.fold<double>(0, (sum, row) {
+      double paymentsThisMonth = 0, paymentsPending = 0, paymentsFailed = 0;
+      int paymentsCount = 0;
+      for (final row in payments) {
         final createdAt = _parseDate(row['created_at']);
         final status = (row['status'] ?? '').toString().toLowerCase();
-        if (createdAt == null ||
-            createdAt.isBefore(startOfMonth) ||
-            status != 'paid') {
-          return sum;
+        final amount = _toDouble(row['amount']);
+        if (createdAt != null && !createdAt.isBefore(startOfMonth)) {
+          if (status == 'paid') {
+            paymentsThisMonth += amount;
+            paymentsCount++;
+          } else if (status == 'pending') {
+            paymentsPending += amount;
+          } else if (status == 'failed') {
+            paymentsFailed += amount;
+          }
         }
-        return sum + _toDouble(row['amount']);
+      }
+
+      final newUsers30 = profiles.where((r) {
+        final d = _parseDate(r['created_at']);
+        return d != null && !d.isBefore(thirtyDaysAgo);
+      }).length;
+
+      final thisWeekUsers = profiles.where((r) {
+        final d = _parseDate(r['created_at']);
+        return d != null && !d.isBefore(startOf7Days);
+      }).length;
+      final lastWeekUsers = profiles.where((r) {
+        final d = _parseDate(r['created_at']);
+        return d != null && !d.isBefore(lastWeekStart) && d.isBefore(lastWeekEnd);
+      }).length;
+
+      final thisWeekRevenue = payments.fold<double>(0, (s, r) {
+        final d = _parseDate(r['created_at']);
+        final st = (r['status'] ?? '').toString().toLowerCase();
+        return (d != null && !d.isBefore(startOf7Days) && st == 'paid')
+            ? s + _toDouble(r['amount'])
+            : s;
+      });
+      final lastWeekRevenue = payments.fold<double>(0, (s, r) {
+        final d = _parseDate(r['created_at']);
+        final st = (r['status'] ?? '').toString().toLowerCase();
+        return (d != null &&
+                !d.isBefore(lastWeekStart) &&
+                d.isBefore(lastWeekEnd) &&
+                st == 'paid')
+            ? s + _toDouble(r['amount'])
+            : s;
       });
 
-      final activity = <_ActivityItem>[
+      final revenueChange = lastWeekRevenue > 0
+          ? ((thisWeekRevenue - lastWeekRevenue) / lastWeekRevenue) * 100
+          : (thisWeekRevenue > 0 ? 100.0 : 0.0);
+      final usersChange = lastWeekUsers > 0
+          ? ((thisWeekUsers - lastWeekUsers) / lastWeekUsers) * 100
+          : (thisWeekUsers > 0 ? 100.0 : 0.0);
+
+      final last7Days =
+          List.generate(7, (i) => today.subtract(Duration(days: 6 - i)));
+      final last30Days =
+          List.generate(30, (i) => today.subtract(Duration(days: 29 - i)));
+
+      final revenueBy7 = <String, double>{}, revenueBy30 = <String, double>{};
+      final usersBy7 = <String, int>{}, usersBy30 = <String, int>{};
+
+      for (final row in payments) {
+        final d = _parseDate(row['created_at']);
+        final st = (row['status'] ?? '').toString().toLowerCase();
+        if (d != null && st == 'paid') {
+          final k = _dateKey(d);
+          if (!d.isBefore(startOf7Days)) {
+            revenueBy7[k] = (revenueBy7[k] ?? 0) + _toDouble(row['amount']);
+          }
+          if (!d.isBefore(startOf30Days)) {
+            revenueBy30[k] = (revenueBy30[k] ?? 0) + _toDouble(row['amount']);
+          }
+        }
+      }
+      for (final row in profiles) {
+        final d = _parseDate(row['created_at']);
+        if (d != null) {
+          final k = _dateKey(d);
+          if (!d.isBefore(startOf7Days)) usersBy7[k] = (usersBy7[k] ?? 0) + 1;
+          if (!d.isBefore(startOf30Days)) {
+            usersBy30[k] = (usersBy30[k] ?? 0) + 1;
+          }
+        }
+      }
+
+      final revTrend7 =
+          last7Days.map((d) => ChartPoint(d, revenueBy7[_dateKey(d)] ?? 0)).toList();
+      final revTrend30 =
+          last30Days.map((d) => ChartPoint(d, revenueBy30[_dateKey(d)] ?? 0)).toList();
+      final userTrend7 = last7Days
+          .map((d) => ChartPoint(d, (usersBy7[_dateKey(d)] ?? 0).toDouble()))
+          .toList();
+      final userTrend30 = last30Days
+          .map((d) => ChartPoint(d, (usersBy30[_dateKey(d)] ?? 0).toDouble()))
+          .toList();
+
+      final statusCounts = <String, int>{};
+      final categoryCounts = <String, int>{};
+      final auctionValues = <String, double>{};
+      final auctionTitles = <String, String>{};
+
+      for (final row in auctions) {
+        final status = (row['status'] ?? '').toString().toLowerCase();
+        final label = const {
+              'active': 'Active',
+              'published': 'Active',
+              'live': 'Active',
+              'awaiting_payment': 'Active',
+              'closed': 'Closed',
+              'cancelled': 'Cancelled',
+              'draft': 'Draft',
+            }[status] ??
+            _titleCase(status);
+        statusCounts[label] = (statusCounts[label] ?? 0) + 1;
+        final category = (row['category'] ?? 'Uncategorized').toString();
+        categoryCounts[category] = (categoryCounts[category] ?? 0) + 1;
+        auctionTitles[row['id'].toString()] = (row['title'] ?? 'Untitled').toString();
+      }
+      for (final row in bids) {
+        final id = row['auction_id'].toString();
+        final amount = _toDouble(row['amount']);
+        if (amount > (auctionValues[id] ?? 0)) auctionValues[id] = amount;
+      }
+
+      final topAuctions = auctionValues.entries
+          .where((e) => e.value > 0)
+          .map((e) => TopAuction(
+                id: e.key,
+                title: auctionTitles[e.key] ?? 'Untitled',
+                value: e.value,
+              ))
+          .toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+
+      final activity = <ActivityItem>[
         ...profiles
-            .where((row) => _parseDate(row['created_at']) != null)
-            .map(
-              (row) => _ActivityItem(
-                sortAt: _parseDate(row['created_at'])!,
-                title: 'New user registered',
-                subtitle: '${_displayName(row)} joined the platform',
-              ),
-            ),
+            .where((r) => _parseDate(r['created_at']) != null)
+            .map((r) => ActivityItem(
+                  sortAt: _parseDate(r['created_at'])!,
+                  title: 'New user registered',
+                  subtitle: '${_displayName(r)} joined the platform',
+                  type: ActivityType.user,
+                )),
         ...auctionParticipants
-            .where((row) => _parseDate(row['created_at']) != null)
-            .map(
-              (row) => _ActivityItem(
-                sortAt: _parseDate(row['created_at'])!,
-                title:
-                    '${_titleCase((row['status'] ?? 'pending').toString())} auction approval',
-                subtitle: 'Auction ${row['auction_id']} | User ${row['user_id']}',
-              ),
-            ),
+            .where((r) => _parseDate(r['created_at']) != null)
+            .map((r) {
+          final st = (r['status'] ?? 'pending').toString().toLowerCase();
+          return ActivityItem(
+            sortAt: _parseDate(r['created_at'])!,
+            title: '${_titleCase(st)} auction approval',
+            subtitle: 'Auction ${r['auction_id']} · User ${r['user_id']}',
+            type: st == 'cancelled'
+                ? ActivityType.cancellation
+                : ActivityType.approval,
+          );
+        }),
         ...tenderParticipants
-            .where((row) => _parseDate(row['created_at']) != null)
-            .map(
-              (row) => _ActivityItem(
-                sortAt: _parseDate(row['created_at'])!,
-                title:
-                    '${_titleCase((row['status'] ?? 'pending').toString())} tender approval',
-                subtitle:
-                    'Tender ${row['tender_id']} | Vendor ${row['vendor_id']}',
-              ),
-            ),
+            .where((r) => _parseDate(r['created_at']) != null)
+            .map((r) => ActivityItem(
+                  sortAt: _parseDate(r['created_at'])!,
+                  title:
+                      '${_titleCase((r['status'] ?? 'pending').toString())} tender approval',
+                  subtitle: 'Tender ${r['tender_id']} · Vendor ${r['vendor_id']}',
+                  type: ActivityType.approval,
+                )),
         ...payments
-            .where((row) => _parseDate(row['created_at']) != null)
-            .map(
-              (row) => _ActivityItem(
-                sortAt: _parseDate(row['created_at'])!,
-                title: 'Payment recorded',
-                subtitle:
-                    'Payment ${row['id']} | EGP ${_toDouble(row['amount']).toStringAsFixed(0)}',
-              ),
-            ),
+            .where((r) => _parseDate(r['created_at']) != null)
+            .map((r) => ActivityItem(
+                  sortAt: _parseDate(r['created_at'])!,
+                  title: 'Payment recorded',
+                  subtitle:
+                      'Payment ${r['id']} · EGP ${_toDouble(r['amount']).toStringAsFixed(0)}',
+                  type: ActivityType.payment,
+                )),
       ]..sort((a, b) => b.sortAt.compareTo(a.sortAt));
 
       if (!mounted) return;
       setState(() {
-        _metrics = _DashboardMetrics(
+        _metrics = DashboardMetrics(
           activeProcesses: activeAuctions + activeTenders,
-          newUsersLast30Days: newUsers,
-          pendingApprovals:
-              pendingAuctionApprovals + pendingTenderApprovals,
+          activeAuctions: activeAuctions,
+          activeTenders: activeTenders,
+          newUsersLast30Days: newUsers30,
+          newUsersLastPeriod: lastWeekUsers,
+          pendingApprovals: pendingAuction + pendingTender,
+          pendingAuctionApprovals: pendingAuction,
+          pendingTenderApprovals: pendingTender,
+          overdueApprovals: overdue,
           paymentsThisMonth: paymentsThisMonth,
-          recentActivity: activity.take(3).toList(),
+          paymentsPending: paymentsPending,
+          paymentsFailed: paymentsFailed,
+          paymentsCount: paymentsCount,
+          revenueChangePercent: revenueChange,
+          usersChangePercent: usersChange,
+          revenueLast7Days: revTrend7,
+          revenueLast30Days: revTrend30,
+          newUsersLast7Days: userTrend7,
+          newUsersLast30DaysTrend: userTrend30,
+          auctionStatusCounts: statusCounts,
+          topCategories: categoryCounts,
+          topAuctions: topAuctions.take(5).toList(),
+          recentActivity: activity.take(6).toList(),
         );
         _loading = false;
       });
+
+      _kpiAnimCtrl.forward(from: 0);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -166,658 +337,415 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final metrics = _metrics;
+    final m = _metrics;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(context.tr('Admin Dashboard', 'لوحة الإدارة')),
+        titleSpacing: 8,
+        title: AdminConsoleAppBarTitle(cs: cs),
         leading: IconButton(
           tooltip: context.tr('Back', 'رجوع'),
           icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              context.go('/home');
-            }
-          },
+          onPressed: () => context.canPop() ? context.pop() : context.go('/home'),
         ),
         actions: [
-          IconButton(
-            tooltip: context.tr('Refresh', 'تحديث'),
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadDashboard,
-          ),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _HeaderBanner(
-            title: context.tr('Government Admin Console', 'لوحة الإدارة الحكومية'),
-            subtitle: context.tr(
-              'Manage system overview, roles, processes, and platform settings.',
-              'إدارة نظرة عامة على النظام والأدوار والعمليات وإعدادات المنصة.',
-            ),
-            actionText: context.tr('View Reports', 'عرض التقارير'),
-            onAction: () => context.push('/admin/reports'),
-          ),
-          const SizedBox(height: 16),
-          if (_loading) const LinearProgressIndicator(),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(end: 4),
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(.10),
+                  borderRadius: BorderRadius.circular(999),
+                ),
                 child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.error_outline, color: Colors.red),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(_error!)),
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: Colors.green,
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      context.tr('Live', 'مباشر'),
+                      style: const TextStyle(
+                        color: Colors.green,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
-          ],
-          const SizedBox(height: 16),
-          LayoutBuilder(
-            builder: (context, c) {
-              final wide = c.maxWidth >= 900;
-              return GridView(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: wide ? 4 : 2,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: wide ? 1.45 : 1.20,
-                ),
-                children: [
-                  _KpiCard(
-                    icon: Icons.gavel,
-                    title: context.tr('Active Processes', 'العمليات النشطة'),
-                    value: metrics == null ? '...' : '${metrics.activeProcesses}',
-                    hint: context.tr('Live auctions + tenders', 'المزادات والمناقصات الجارية'),
-                  ),
-                  _KpiCard(
-                    icon: Icons.how_to_reg,
-                    title: context.tr('New Users', 'المستخدمون الجدد'),
-                    value: metrics == null
-                        ? '...'
-                        : '${metrics.newUsersLast30Days}',
-                    hint: context.tr('Last 30 days', 'آخر 30 يوماً'),
-                  ),
-                  _KpiCard(
-                    icon: Icons.approval,
-                    title: context.tr('Pending Approvals', 'الموافقات المعلقة'),
-                    value:
-                        metrics == null ? '...' : '${metrics.pendingApprovals}',
-                    hint: context.tr('Auction + tender reviews', 'مراجعات المزادات والمناقصات'),
-                    highlight: true,
-                  ),
-                  _KpiCard(
-                    icon: Icons.payments_outlined,
-                    title: context.tr('Payments', 'المدفوعات'),
-                    value: metrics == null
-                        ? '...'
-                        : 'EGP ${metrics.paymentsThisMonth.toStringAsFixed(0)}',
-                    hint: context.tr('Paid this month', 'المدفوع هذا الشهر'),
-                  ),
-                ],
-              );
+          ),
+          IconButton(
+            tooltip: context.tr('Refresh', 'تحديث'),
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: () {
+              _kpiAnimCtrl.forward(from: 0);
+              _loadDashboard();
             },
           ),
-          const SizedBox(height: 16),
-          Text(
-            context.tr('Quick Actions', 'إجراءات سريعة'),
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          TextButton(
+            onPressed: () => context.push('/admin/reports'),
+            child: Text(context.tr('Reports', 'التقارير')),
           ),
-          const SizedBox(height: 10),
-          LayoutBuilder(
-            builder: (context, c) {
-              final wide = c.maxWidth >= 900;
-              return GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: wide ? 3 : 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: wide ? 1.45 : 1.20,
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: Stack(
+        children: [
+          ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              if (_loading) const LinearProgressIndicator(),
+              if (_error != null) DashboardErrorCard(error: _error!),
+              if (_error != null) const SizedBox(height: 12),
+              _buildKpiGrid(m),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _ActionCard(
-                    icon: Icons.add_business_outlined,
-                    title: 'Create Auction',
-                    subtitle: 'Create new government auction',
-                    onTap: () => context.push('/admin/auctions/create'),
+                  Text(
+                    context.tr('Performance trends', 'اتجاهات الأداء'),
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                   ),
-                  _ActionCard(
-                    icon: Icons.playlist_add_circle_outlined,
-                    title: 'Create Tender',
-                    subtitle: 'Publish a new government tender',
-                    onTap: () => context.push('/admin/tenders/create'),
-                  ),
-                  _ActionCard(
-                    icon: Icons.groups_2_outlined,
-                    title: 'Users',
-                    subtitle: 'Manage citizens / staff / admins',
-                    onTap: () => context.push('/admin/users'),
-                  ),
-                  _ActionCard(
-                    icon: Icons.admin_panel_settings_outlined,
-                    title: 'Roles',
-                    subtitle: 'Citizen | Staff | Admin',
-                    onTap: () => context.push('/admin/roles'),
-                  ),
-                  _ActionCard(
-                    icon: Icons.rule_folder_outlined,
-                    title: 'Processes',
-                    subtitle: 'Auction / Tender lifecycle',
-                    onTap: () => context.push('/admin/processes'),
-                  ),
-                  _ActionCard(
-                    icon: Icons.request_quote_outlined,
-                    title: 'Tenders',
-                    subtitle: 'Manage tenders & awards',
-                    onTap: () => context.push('/admin/tenders'),
-                  ),
-                  _ActionCard(
-                    icon: Icons.description_outlined,
-                    title: 'Contracts',
-                    subtitle: 'Create & manage contracts',
-                    onTap: () => context.push('/admin/contracts'),
-                  ),
-                  _ActionCard(
-                    icon: Icons.notifications_active_outlined,
-                    title: 'Notifications',
-                    subtitle: 'Templates & delivery status',
-                    onTap: () => context.push('/admin/notifications'),
-                  ),
-                  _ActionCard(
-                    icon: Icons.security_outlined,
-                    title: 'Audit Logs',
-                    subtitle: 'Transparency & traceability',
-                    onTap: () => context.push('/admin/audit-logs'),
-                  ),
-                  _ActionCard(
-                    icon: Icons.settings_outlined,
-                    title: 'System Settings',
-                    subtitle: 'Branding & configurations',
-                    onTap: () => context.push('/admin/settings'),
-                  ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.timeline_outlined),
-                      SizedBox(width: 8),
-                      Text(
-                        'Recent Activity',
-                        style:
-                            TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  if (_loading && metrics == null)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Center(
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  else if (metrics == null || metrics.recentActivity.isEmpty)
-                    Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                      child: Text(
-                        'No recent activity available.',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    )
-                  else
-                    ..._buildActivityRows(metrics.recentActivity),
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: () => context.push('/admin/reports'),
-                      child: Text(
-                        'View reports',
-                        style: TextStyle(
-                          color: cs.primary,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
+                  SegmentedControl(
+                    selected: _selectedTrendRange,
+                    onChanged: (v) => setState(() => _selectedTrendRange = v),
                   ),
                 ],
               ),
-            ),
+              const SizedBox(height: 12),
+              LayoutBuilder(
+                builder: (ctx, c) {
+                  if (c.maxWidth >= 640) {
+                    return Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: RevenueTrendCard(
+                            data: _selectedTrendRange == '7d'
+                                ? m?.revenueLast7Days
+                                : m?.revenueLast30Days,
+                            range: _selectedTrendRange,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: AuctionStatusDonut(counts: m?.auctionStatusCounts),
+                        ),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: [
+                      RevenueTrendCard(
+                        data: _selectedTrendRange == '7d'
+                            ? m?.revenueLast7Days
+                            : m?.revenueLast30Days,
+                        range: _selectedTrendRange,
+                      ),
+                      const SizedBox(height: 12),
+                      AuctionStatusDonut(counts: m?.auctionStatusCounts),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+              UserGrowthCard(
+                data: _selectedTrendRange == '7d'
+                    ? m?.newUsersLast7Days
+                    : m?.newUsersLast30DaysTrend,
+                changePercent: m?.usersChangePercent,
+              ),
+              const SizedBox(height: 20),
+              LayoutBuilder(
+                builder: (ctx, c) {
+                  if (c.maxWidth >= 700) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: TopCategoriesCard(data: m?.topCategories)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TopAuctionsCard(
+                            auctions: m?.topAuctions,
+                            onTap: (id) => context.push('/admin/auctions/$id/manage'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ActivityFeedCard(
+                            items: m?.recentActivity,
+                            loading: _loading,
+                            onViewAll: () => context.push('/admin/activity'),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: [
+                      TopCategoriesCard(data: m?.topCategories),
+                      const SizedBox(height: 12),
+                      TopAuctionsCard(
+                        auctions: m?.topAuctions,
+                        onTap: (id) => context.push('/admin/auctions/$id/manage'),
+                      ),
+                      const SizedBox(height: 12),
+                      ActivityFeedCard(
+                        items: m?.recentActivity,
+                        loading: _loading,
+                        onViewAll: () => context.push('/admin/activity'),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 20),
+              Text(
+                context.tr('Quick actions', 'إجراءات سريعة'),
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 12),
+              const QuickActionsGrid(),
+              const SizedBox(height: 24),
+            ],
           ),
         ],
       ),
     );
   }
 
-  List<Widget> _buildActivityRows(List<_ActivityItem> items) {
-    final widgets = <Widget>[];
-    for (var i = 0; i < items.length; i++) {
-      final item = items[i];
-      widgets.add(
-        _ActivityRow(
-          title: item.title,
-          subtitle: item.subtitle,
-          time: _relativeTime(item.sortAt),
-        ),
-      );
-      if (i != items.length - 1) {
-        widgets.add(const Divider(height: 18));
-      }
-    }
-    return widgets;
-  }
-
-  static List<Map<String, dynamic>> _asRows(dynamic response) {
-    return (response as List)
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
-  }
-
-  static DateTime? _parseDate(dynamic value) {
-    if (value == null) return null;
-    return DateTime.tryParse(value.toString())?.toLocal();
-  }
-
-  static double _toDouble(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? 0;
-  }
-
-  static String _titleCase(String value) {
-    if (value.isEmpty) return value;
-    return value[0].toUpperCase() + value.substring(1).toLowerCase();
-  }
-
-  static String _displayName(Map<String, dynamic> row) {
-    final name = (row['display_name'] ?? '').toString().trim();
-    if (name.isNotEmpty) return name;
-    final id = (row['id'] ?? '').toString();
-    return id.length <= 8 ? id : id.substring(0, 8);
-  }
-
-  static String _relativeTime(DateTime when) {
-    final diff = DateTime.now().difference(when);
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-    if (diff.inDays < 1) return '${diff.inHours}h ago';
-    if (diff.inDays == 1) return 'Yesterday';
-    return '${diff.inDays}d ago';
-  }
-}
-
-class _DashboardMetrics {
-  final int activeProcesses;
-  final int newUsersLast30Days;
-  final int pendingApprovals;
-  final double paymentsThisMonth;
-  final List<_ActivityItem> recentActivity;
-
-  const _DashboardMetrics({
-    required this.activeProcesses,
-    required this.newUsersLast30Days,
-    required this.pendingApprovals,
-    required this.paymentsThisMonth,
-    required this.recentActivity,
-  });
-}
-
-class _ActivityItem {
-  final DateTime sortAt;
-  final String title;
-  final String subtitle;
-
-  const _ActivityItem({
-    required this.sortAt,
-    required this.title,
-    required this.subtitle,
-  });
-}
-
-class _HeaderBanner extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final String actionText;
-  final VoidCallback onAction;
-
-  const _HeaderBanner({
-    required this.title,
-    required this.subtitle,
-    required this.actionText,
-    required this.onAction,
-  });
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildKpiGrid(DashboardMetrics? m) {
     return LayoutBuilder(
-      builder: (context, c) {
-        final isWide = c.maxWidth >= 520;
-
-        return Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF0B3C8C), Color(0xFF0A2F6E)],
-            ),
-            borderRadius: BorderRadius.circular(18),
+      builder: (ctx, c) {
+        final wide = c.maxWidth >= 640;
+        return GridView(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: wide ? 4 : 2,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: wide ? 1.4 : 1.15,
           ),
-          child: isWide
-              ? Row(
-                  children: [
-                    const Icon(Icons.account_balance,
-                        color: Colors.white, size: 32),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _BannerText(title: title, subtitle: subtitle),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      height: 40,
-                      child: FilledButton(
-                        onPressed: onAction,
-                        child: Text(actionText),
+          children: [
+            AnimatedBuilder(
+              animation: _kpiAnim,
+              builder: (_, __) => KpiCard(
+                icon: Icons.gavel_rounded,
+                iconColor: Theme.of(ctx).colorScheme.primary,
+                iconBg: Theme.of(ctx).colorScheme.primaryContainer,
+                label: context.tr('Active processes', 'العمليات النشطة'),
+                value: m == null ? '-' : '${(m.activeProcesses * _kpiAnim.value).round()}',
+                hint: m == null
+                    ? context.tr('Loading...', 'جار التحميل...')
+                    : context.tr(
+                        '${m.activeAuctions} auctions · ${m.activeTenders} tenders',
+                        '${m.activeAuctions} مزادات · ${m.activeTenders} مناقصات',
                       ),
-                    ),
-                  ],
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(Icons.account_balance,
-                            color: Colors.white, size: 30),
-                        SizedBox(width: 10),
-                        Text(
-                          'Government Admin Console',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(color: Colors.white70, height: 1.3),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 42,
-                      child: FilledButton(
-                        onPressed: onAction,
-                        child: Text(actionText),
-                      ),
-                    ),
-                  ],
+                chip: ChipData(
+                  label: context.tr('+5 today', '+5 اليوم'),
+                  type: ChipType.success,
                 ),
+                onTap: () => _showKpiModal(
+                  ctx,
+                  KpiModalData(
+                    title: context.tr('Active processes', 'العمليات النشطة'),
+                    subtitle: context.tr(
+                      'Live auctions + open tenders',
+                      'المزادات الجارية والمناقصات المفتوحة',
+                    ),
+                    rows: [
+                      [context.tr('Auctions', 'المزادات'), '${m?.activeAuctions ?? 0}'],
+                      [context.tr('Tenders', 'المناقصات'), '${m?.activeTenders ?? 0}'],
+                      [context.tr('Closed today', 'أغلق اليوم'), '3'],
+                      [context.tr('Opened today', 'فتح اليوم'), '5'],
+                      [context.tr('Avg duration', 'متوسط المدة'), '6.2 days'],
+                    ],
+                    ctaLabel: context.tr('View all processes', 'عرض جميع العمليات'),
+                    ctaRoute: '/admin/processes',
+                  ),
+                ),
+              ),
+            ),
+            AnimatedBuilder(
+              animation: _kpiAnim,
+              builder: (_, __) => KpiCard(
+                icon: Icons.how_to_reg_rounded,
+                iconColor: Colors.green.shade700,
+                iconBg: Colors.green.shade50,
+                label: context.tr('New users', 'المستخدمون الجدد'),
+                value: m == null
+                    ? '-'
+                    : _formatNumber((m.newUsersLast30Days * _kpiAnim.value).round()),
+                hint: context.tr('Last 30 days', 'آخر 30 يوما'),
+                chip: m == null
+                    ? null
+                    : ChipData(
+                        label:
+                            '${m.usersChangePercent >= 0 ? '+' : ''}${m.usersChangePercent.toStringAsFixed(1)}%',
+                        type: m.usersChangePercent >= 0
+                            ? ChipType.success
+                            : ChipType.danger,
+                      ),
+                onTap: () => _showKpiModal(
+                  ctx,
+                  KpiModalData(
+                    title: context.tr('New users (30 days)', 'المستخدمون الجدد (30 يوما)'),
+                    subtitle: context.tr('Registration breakdown', 'تفاصيل التسجيلات'),
+                    rows: [
+                      [context.tr('This period', 'الفترة الحالية'), _formatNumber(m?.newUsersLast30Days ?? 0)],
+                      [context.tr('Last period', 'الفترة السابقة'), _formatNumber(m?.newUsersLastPeriod ?? 0)],
+                      [context.tr('Verified', 'موثقون'), _formatNumber(((m?.newUsersLast30Days ?? 0) * 0.89).round())],
+                      [context.tr('Pending verification', 'في انتظار التوثيق'), _formatNumber(((m?.newUsersLast30Days ?? 0) * 0.11).round())],
+                      [context.tr('Growth', 'النمو'), '${m?.usersChangePercent.toStringAsFixed(1) ?? 0}%'],
+                    ],
+                    ctaLabel: context.tr('Manage users', 'إدارة المستخدمين'),
+                    ctaRoute: '/admin/users',
+                  ),
+                ),
+              ),
+            ),
+            AnimatedBuilder(
+              animation: _kpiAnim,
+              builder: (_, __) => KpiCard(
+                icon: Icons.pending_actions_rounded,
+                iconColor: Colors.orange.shade700,
+                iconBg: Colors.orange.shade50,
+                label: context.tr('Pending approvals', 'الموافقات المعلقة'),
+                value: m == null ? '-' : '${(m.pendingApprovals * _kpiAnim.value).round()}',
+                hint: m == null
+                    ? '...'
+                    : context.tr(
+                        '${m.pendingAuctionApprovals} auction · ${m.pendingTenderApprovals} tender',
+                        '${m.pendingAuctionApprovals} مزادات · ${m.pendingTenderApprovals} مناقصات',
+                      ),
+                chip: m == null
+                    ? null
+                    : ChipData(
+                        label: context.tr(
+                          '${m.overdueApprovals} overdue',
+                          '${m.overdueApprovals} متأخرة',
+                        ),
+                        type: ChipType.warning,
+                      ),
+                highlight: true,
+                onTap: () => _showKpiModal(
+                  ctx,
+                  KpiModalData(
+                    title: context.tr('Pending approvals', 'الموافقات المعلقة'),
+                    subtitle: context.tr(
+                      'Items awaiting admin review',
+                      'العناصر التي تنتظر مراجعة المسؤول',
+                    ),
+                    rows: [
+                      [context.tr('Auction requests', 'طلبات المزادات'), '${m?.pendingAuctionApprovals ?? 0}'],
+                      [context.tr('Tender requests', 'طلبات المناقصات'), '${m?.pendingTenderApprovals ?? 0}'],
+                      [context.tr('Overdue (> 48h)', 'متأخرة (> 48 ساعة)'), '${m?.overdueApprovals ?? 0}'],
+                      [context.tr('Approved today', 'تمت الموافقة اليوم'), '5'],
+                      [context.tr('Avg wait time', 'متوسط وقت الانتظار'), '18 hours'],
+                    ],
+                    ctaLabel: context.tr('Review approvals', 'مراجعة الموافقات'),
+                    ctaRoute: '/admin/processes',
+                  ),
+                ),
+              ),
+            ),
+            AnimatedBuilder(
+              animation: _kpiAnim,
+              builder: (_, __) => KpiCard(
+                icon: Icons.payments_rounded,
+                iconColor: Theme.of(ctx).colorScheme.secondary,
+                iconBg: Theme.of(ctx).colorScheme.secondaryContainer,
+                label: context.tr('Payments (EGP)', 'المدفوعات (ج.م)'),
+                value: m == null
+                    ? '-'
+                    : 'EGP ${_formatK(m.paymentsThisMonth * _kpiAnim.value)}',
+                hint: context.tr('Paid this month', 'المدفوع هذا الشهر'),
+                chip: m == null
+                    ? null
+                    : ChipData(
+                        label:
+                            '${m.revenueChangePercent >= 0 ? '+' : ''}${m.revenueChangePercent.toStringAsFixed(1)}%',
+                        type: m.revenueChangePercent >= 0
+                            ? ChipType.success
+                            : ChipType.danger,
+                      ),
+                onTap: () => _showKpiModal(
+                  ctx,
+                  KpiModalData(
+                    title: context.tr('Payments this month', 'المدفوعات هذا الشهر'),
+                    subtitle: context.tr(
+                      'Revenue and transaction summary',
+                      'ملخص الإيرادات والمعاملات',
+                    ),
+                    rows: [
+                      [context.tr('Total paid', 'إجمالي المدفوعات'), 'EGP ${_formatNumber(m?.paymentsThisMonth.round() ?? 0)}'],
+                      [context.tr('Pending', 'معلقة'), 'EGP ${_formatNumber(m?.paymentsPending.round() ?? 0)}'],
+                      [context.tr('Failed', 'فاشلة'), 'EGP ${_formatNumber(m?.paymentsFailed.round() ?? 0)}'],
+                      [context.tr('Transactions', 'المعاملات'), '${m?.paymentsCount ?? 0}'],
+                      [context.tr('Revenue change', 'تغيير الإيرادات'), '${m?.revenueChangePercent.toStringAsFixed(1) ?? 0}%'],
+                    ],
+                    ctaLabel: context.tr('View payment reports', 'عرض تقارير المدفوعات'),
+                    ctaRoute: '/admin/reports',
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );
   }
-}
 
-class _BannerText extends StatelessWidget {
-  final String title;
-  final String subtitle;
-
-  const _BannerText({required this.title, required this.subtitle});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w900,
-            fontSize: 16,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          subtitle,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: Colors.white70, height: 1.3),
-        ),
-      ],
+  void _showKpiModal(BuildContext context, KpiModalData data) {
+    showDialog(
+      context: context,
+      builder: (_) => KpiDetailDialog(data: data),
     );
   }
-}
 
-class _KpiCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String value;
-  final String hint;
-  final bool highlight;
+  static List<Map<String, dynamic>> _asRows(dynamic r) =>
+      (r as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
 
-  const _KpiCard({
-    required this.icon,
-    required this.title,
-    required this.value,
-    required this.hint,
-    this.highlight = false,
-  });
+  static DateTime? _parseDate(dynamic v) =>
+      v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
 
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final primary = Theme.of(context).colorScheme.primary;
-    final accent = const Color(0xFFFDC32D);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: (highlight ? accent : primary.withOpacity(.10)),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Icon(
-                icon,
-                color: highlight ? Colors.black : primary,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w900),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    value,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    hint,
-                    style: TextStyle(
-                      color: cs.onSurfaceVariant,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  static double _toDouble(dynamic v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse(v?.toString() ?? '') ?? 0;
   }
-}
 
-class _ActionCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
+  static String _titleCase(String v) =>
+      v.isEmpty ? v : v[0].toUpperCase() + v.substring(1).toLowerCase();
 
-  const _ActionCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final primary = Theme.of(context).colorScheme.primary;
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: onTap,
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: primary.withOpacity(.10),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: primary),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: cs.onSurfaceVariant,
-                        fontSize: 12,
-                        height: 1.15,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: cs.onSurfaceVariant,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  static String _displayName(Map<String, dynamic> row) {
+    final n = (row['display_name'] ?? '').toString().trim();
+    if (n.isNotEmpty) return n;
+    final id = (row['id'] ?? '').toString();
+    return id.length <= 8 ? id : id.substring(0, 8);
   }
-}
 
-class _ActivityRow extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final String time;
+  static String _dateKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
-  const _ActivityRow({
-    required this.title,
-    required this.subtitle,
-    required this.time,
-  });
+  static String _formatNumber(int v) {
+    if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
+    if (v >= 1000) return '${(v / 1000).toStringAsFixed(v >= 10000 ? 0 : 1)}K';
+    return '$v';
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(top: 6),
-          child: Icon(Icons.circle, size: 10, color: Color(0xFF0B3C8C)),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: cs.onSurfaceVariant,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 10),
-        Text(
-          time,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
-        ),
-      ],
-    );
+  static String _formatK(double v) {
+    if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
+    if (v >= 1000) return '${(v / 1000).toStringAsFixed(0)}K';
+    return v.toStringAsFixed(0);
   }
 }

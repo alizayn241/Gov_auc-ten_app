@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gov_auction_app/core/localization/app_localizations.dart';
 import 'package:go_router/go_router.dart';
+import 'package:gov_auction_app/core/widgets/app_image.dart';
 
+import '../../data/models/auction.dart';
 import '../../data/models/bid.dart';
 import '../viewmodel/auctions_providers.dart';
 import '../viewmodel/auctions_view_model.dart';
@@ -71,11 +73,13 @@ class MyBidsScreen extends ConsumerWidget {
                 ),
                 error: (_, __) => _BidsList(
                   bids: bids,
+                  auctionMap: {},
                   resolveTitle: (auctionId) =>
                       context.tr('Auction #$auctionId', 'مزاد رقم $auctionId'),
                 ),
                 data: (auctionMap) => _BidsList(
                   bids: bids,
+                  auctionMap: auctionMap,
                   resolveTitle: (auctionId) =>
                       auctionMap[auctionId]?.title ??
                       context.tr('Auction #$auctionId', 'مزاد رقم $auctionId'),
@@ -95,44 +99,72 @@ class _MyBidsHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF0B3C8C), Color(0xFF0A2F6E)],
+          colors: [Color(0xFF0B3C8C), Color(0xFF0A2F6E), Color(0xFF1E3A8A)],
         ),
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0B3C8C).withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Text(
-            context.tr('Bid activity', 'نشاط المزايدات'),
-            style: TextStyle(
-              color: Colors.white70,
-              fontWeight: FontWeight.w800,
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(20),
             ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            context.tr('Track your offers more clearly', 'تابع عروضك بشكل أوضح'),
-            style: TextStyle(
+            child: const Icon(
+              Icons.gavel_rounded,
               color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.w900,
-              height: 1,
+              size: 32,
             ),
           ),
-          SizedBox(height: 10),
-          Text(
-            context.tr(
-              'Review your submitted bids in a cleaner mobile timeline and jump back into auction details faster.',
-              'راجع مزايداتك في تسلسل أوضح على الهاتف وارجع إلى تفاصيل المزاد بسرعة أكبر.',
-            ),
-            style: TextStyle(
-              color: Colors.white70,
-              height: 1.4,
+          const SizedBox(width: 20),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.tr('Bid activity', 'نشاط المزايدات'),
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  context.tr('Track your offers more clearly', 'تابع عروضك بشكل أوضح'),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  context.tr(
+                    'Review your submitted bids in a cleaner mobile timeline and jump back into auction details faster.',
+                    'راجع مزايداتك في تسلسل أوضح على الهاتف وارجع إلى تفاصيل المزاد بسرعة أكبر.',
+                  ),
+                  style: TextStyle(
+                    color: Colors.white70,
+                    height: 1.4,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -145,12 +177,16 @@ class _BidCard extends StatelessWidget {
   final String title;
   final double amount;
   final DateTime timestamp;
+  final bool? isWinner;
+  final String imagePath;
   final VoidCallback onTap;
 
   const _BidCard({
     required this.title,
     required this.amount,
     required this.timestamp,
+    this.isWinner,
+    required this.imagePath,
     required this.onTap,
   });
 
@@ -158,65 +194,133 @@ class _BidCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final l10n = context.l10n;
+
+    // Determine status
+    String statusText;
+    Color statusColor;
+    IconData statusIcon;
+
+    if (isWinner == true) {
+      statusText = 'Winning';
+      statusColor = Colors.green;
+      statusIcon = Icons.emoji_events;
+    } else if (isWinner == false) {
+      statusText = 'Outbid';
+      statusColor = Colors.orange;
+      statusIcon = Icons.trending_down;
+    } else {
+      statusText = 'Active';
+      statusColor = cs.primary;
+      statusIcon = Icons.access_time;
+    }
+
     return InkWell(
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(24),
       onTap: onTap,
       child: Card(
+        elevation: 4,
+        shadowColor: Colors.black.withOpacity(0.1),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+        ),
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: cs.primary.withOpacity(.12),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Icon(
-                  Icons.gavel_rounded,
-                  color: cs.primary,
+              ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: AppImage(
+                    imagePath: imagePath,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: Colors.black12,
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.image, size: 20),
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                        height: 1.15,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              height: 1.2,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        _StatusPill(
+                          text: statusText,
+                          color: statusColor,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _formatTimestamp(timestamp),
+                            style: TextStyle(
+                              color: cs.onSurfaceVariant,
+                              fontSize: 12,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Text(
                       '${l10n.t('EGP', 'ج.م')} ${amount.toStringAsFixed(0)}',
                       style: TextStyle(
                         fontWeight: FontWeight.w900,
-                        color: cs.primary,
                         fontSize: 18,
+                        color: cs.primary,
                       ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      timestamp.toLocal().toString(),
-                      style: TextStyle(color: cs.onSurfaceVariant),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              const Icon(Icons.chevron_right),
+              const SizedBox(width: 12),
+              const Icon(
+                Icons.chevron_right,
+                color: Colors.grey,
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  String _formatTimestamp(DateTime timestamp) {
+    final now = DateTime.now();
+    final difference = now.difference(timestamp);
+
+    if (difference.inDays > 0) {
+      return '${difference.inDays}d ago';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours}h ago';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes}m ago';
+    } else {
+      return 'Just now';
+    }
   }
 }
 
@@ -271,12 +375,44 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
+class _StatusPill extends StatelessWidget {
+  final String text;
+  final Color color;
+
+  const _StatusPill({
+    required this.text,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
 class _BidsList extends StatelessWidget {
   final List<Bid> bids;
+  final Map<String, Auction> auctionMap;
   final String Function(String auctionId) resolveTitle;
 
   const _BidsList({
     required this.bids,
+    required this.auctionMap,
     required this.resolveTitle,
   });
 
@@ -296,12 +432,19 @@ class _BidsList extends StatelessWidget {
           ),
         ),
         ...bids.map((bid) {
+          final auction = auctionMap[bid.auctionId];
+          final imagePath = auction?.images.isNotEmpty == true
+              ? auction!.images.first
+              : 'assets/images/auctions/auction_blue_01.jpg';
+
           return Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: _BidCard(
               title: resolveTitle(bid.auctionId),
               amount: bid.amount,
               timestamp: bid.timestamp,
+              isWinner: bid.isWinner,
+              imagePath: imagePath,
               onTap: () => context.push('/auction/${bid.auctionId}'),
             ),
           );

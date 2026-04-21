@@ -25,7 +25,7 @@ class AdminInvoiceItem {
       auctionId: (json['auction_id'] ?? '').toString(),
       tenderId: (json['tender_id'] ?? '').toString(),
       userId: json['user_id'].toString(),
-      total: json['total'] as num,
+      total: (json['total'] as num?) ?? (json['amount'] as num?) ?? 0,
       status: (json['status'] ?? '').toString(),
       dueAt: json['due_at'] == null
           ? null

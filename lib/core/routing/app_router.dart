@@ -12,6 +12,8 @@ import '../../features/onboarding/presentation/view/onboarding_screen.dart';
 
 import '../../features/home/presentation/view/home_screen.dart';
 import '../../features/profile/presentation/view/profile_screen.dart';
+import '../../features/profile/presentation/view/account_screen.dart';
+import '../../features/profile/presentation/view/help_support_screen.dart';
 import '../../features/notifications/presentation/view/notifications_screen.dart';
 
 import '../../features/auctions/presentation/view/auctions_list_screen.dart';
@@ -19,10 +21,12 @@ import '../../features/auctions/presentation/view/auction_details_screen.dart';
 import '../../features/auctions/presentation/view/watchlist_screen.dart';
 import '../../features/auctions/presentation/view/my_bids_screen.dart';
 import '../../features/auctions/presentation/view/my_payments_screen.dart';
+import '../../features/auctions/presentation/view/payment_success_screen.dart';
 
 import '../../features/chat/presentation/view/chat_screen.dart';
 
 import '../../features/admin/presentation/view/admin_dashboard_screen.dart';
+import '../../features/admin/presentation/view/admin_recent_activity_screen.dart';
 import '../../features/admin/presentation/view/admin_reports_screen.dart';
 import '../../features/admin/presentation/view/admin_tenders_screen.dart';
 import '../../features/admin/presentation/view/admin_tender_participants_screen.dart';
@@ -35,6 +39,7 @@ import 'package:gov_auction_app/features/admin/presentation/view/admin_processes
 import 'package:gov_auction_app/features/admin/presentation/view/admin_notifications_screen.dart';
 import 'package:gov_auction_app/features/admin/presentation/view/admin_audit_logs_screen.dart';
 import 'package:gov_auction_app/features/admin/presentation/view/admin_settings_screen.dart';
+import 'package:gov_auction_app/features/admin/presentation/view/admin_contracts_screen.dart';
 
 import '../../features/auth/presentation/viewmodel/auth_state.dart';
 import '../../features/auth/presentation/viewmodel/auth_view_model.dart';
@@ -117,6 +122,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, __) => const AdminReportsScreen(),
       ),
       GoRoute(
+        path: '/admin/activity',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (_, __) => const AdminRecentActivityScreen(),
+      ),
+      GoRoute(
         path: '/admin/users',
         parentNavigatorKey: _rootNavigatorKey,
         builder: (_, __) => const AdminUsersScreen(),
@@ -145,6 +155,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/admin/settings',
         parentNavigatorKey: _rootNavigatorKey,
         builder: (_, __) => const AdminSettingsScreen(),
+      ),
+      GoRoute(
+        path: '/admin/contracts',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (_, __) => const AdminContractsScreen(),
       ),
 
       // ✅ Admin Tender Award
@@ -218,6 +233,16 @@ GoRoute(
   builder: (context, state) =>
       ConfirmPaymentScreen(auctionId: state.pathParameters['id']!),
 ),
+GoRoute(
+  path: '/payment/success',
+  parentNavigatorKey: _rootNavigatorKey,
+  builder: (context, state) => PaymentSuccessScreen(
+    title: state.uri.queryParameters['title'] ?? 'Invoice',
+    amountLabel: state.uri.queryParameters['amount'] ?? '',
+    reference: state.uri.queryParameters['reference'],
+    isTender: state.uri.queryParameters['kind'] == 'tender',
+  ),
+),
       // ✅ Staff
       GoRoute(
         path: '/staff/approvals',
@@ -242,6 +267,14 @@ GoRoute(
           GoRoute(
             path: '/notifications',
             builder: (_, __) => const NotificationsScreen(),
+          ),
+          GoRoute(
+            path: '/profile/account',
+            builder: (_, __) => const AccountScreen(),
+          ),
+          GoRoute(
+            path: '/profile/help',
+            builder: (_, __) => const HelpSupportScreen(),
           ),
           GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
           GoRoute(
@@ -297,8 +330,18 @@ GoRoute(
       final wantsWatchlist = loc.startsWith('/watchlist');
       final wantsMyBids = loc.startsWith('/my-bids');
       final wantsUserPayments = loc.startsWith('/my-payments');
+      final adminAuctionPaymentMatch = RegExp(r'^/admin/auctions/([^/]+)/payment$')
+          .firstMatch(loc);
+      final adminTenderPaymentMatch = RegExp(r'^/admin/tenders/([^/]+)/payment$')
+          .firstMatch(loc);
 
       if (wantsAdmin && role != 'admin') return '/profile';
+      if (adminAuctionPaymentMatch != null) {
+        return '/admin/auctions/${adminAuctionPaymentMatch.group(1)!}/manage';
+      }
+      if (adminTenderPaymentMatch != null) {
+        return '/admin/tenders/${adminTenderPaymentMatch.group(1)!}/award';
+      }
 
       // ✅ admin يستطيع دخول staff routes
       if (wantsStaff && !(role == 'staff' || role == 'admin')) return '/profile';

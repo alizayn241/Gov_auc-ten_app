@@ -30,6 +30,7 @@ class _ManageAuctionScreenState extends ConsumerState<ManageAuctionScreen> {
   double? _latitude;
   double? _longitude;
   String _status = 'draft';
+  int _bidCount = 0;
   AdminInvoiceItem? _invoice;
 
   bool loading = true;
@@ -77,6 +78,10 @@ class _ManageAuctionScreenState extends ConsumerState<ManageAuctionScreen> {
           .single();
 
       final invoice = await _remote.getInvoiceByAuction(widget.auctionId);
+      final bids = await Supabase.instance.client
+          .from('bids')
+          .select('id')
+          .eq('auction_id', widget.auctionId);
 
       _title.text = (row['title'] ?? '').toString();
       _category = (row['category'] ?? '').toString().isEmpty
@@ -89,6 +94,7 @@ class _ManageAuctionScreenState extends ConsumerState<ManageAuctionScreen> {
       _status = (row['status'] ?? 'draft').toString();
       _startDate = DateTime.tryParse(row['start_date'].toString());
       _endTime = DateTime.tryParse(row['end_time'].toString());
+      _bidCount = (bids as List).length;
       _invoice = invoice;
 
       setState(() => loading = false);
@@ -269,16 +275,18 @@ class _ManageAuctionScreenState extends ConsumerState<ManageAuctionScreen> {
           .contains(_status.toLowerCase());
 
   bool get _canFinalize =>
-      {'ended', 'active', 'live'}.contains(_status.toLowerCase());
-
-  bool get _canConfirmPayment =>
-      _invoice != null &&
-      !_isInvoicePaid &&
-      {'awaiting_payment', 'paid', 'ended', 'active', 'live'}
-          .contains(_status.toLowerCase());
+      !_hasInvoice &&
+      _bidCount > 0 &&
+      (_isAuctionExpired ||
+          {'ended', 'active', 'live'}.contains(_status.toLowerCase()));
 
   bool get _isInvoicePaid =>
       (_invoice?.status ?? '').toLowerCase() == 'paid';
+
+  bool get _hasInvoice => _invoice != null;
+
+  bool get _isAuctionExpired =>
+      _endTime != null && _endTime!.isBefore(DateTime.now());
 
   @override
   Widget build(BuildContext context) {
@@ -311,6 +319,7 @@ class _ManageAuctionScreenState extends ConsumerState<ManageAuctionScreen> {
           _LifecycleHero(
             auctionId: widget.auctionId,
             status: _status,
+            bidCount: _bidCount,
             invoice: _invoice,
           ),
           const SizedBox(height: 14),
@@ -496,11 +505,9 @@ class _ManageAuctionScreenState extends ConsumerState<ManageAuctionScreen> {
                   ),
                   const SizedBox(height: 10),
                   _ActionButton(
-                    enabled: _canConfirmPayment,
+                    enabled: false,
                     icon: Icons.payments_outlined,
-                    label: _isInvoicePaid
-                        ? context.tr('Payment Confirmed', 'تم تأكيد الدفع')
-                        : context.tr('Confirm Payment', 'تأكيد الدفع'),
+                    label: context.tr('User Payment Only', 'الدفع للمستخدم فقط'),
                     subtitle: _invoice == null
                         ? context.tr(
                             'Finalize the auction first to create an invoice',
@@ -508,16 +515,14 @@ class _ManageAuctionScreenState extends ConsumerState<ManageAuctionScreen> {
                           )
                         : _isInvoicePaid
                             ? context.tr(
-                                'The invoice is already marked as paid',
-                                'تم تعليم الفاتورة كمدفوعة بالفعل',
+                                'The winner already completed payment from the user payments screen',
+                                'أكمل الفائز الدفع بالفعل من شاشة مدفوعاتي',
                               )
                             : context.tr(
-                                'Review the invoice and record the received payment',
-                                'راجع الفاتورة وسجل الدفعة المستلمة',
+                                'Admins cannot submit payment. The winner must pay from My Payments.',
+                                'لا يمكن للإدارة تسجيل الدفع. يجب أن يدفع الفائز من شاشة مدفوعاتي.',
                               ),
-                    onTap: () => context.push(
-                      '/admin/auctions/${widget.auctionId}/payment',
-                    ),
+                    onTap: () {},
                   ),
                 ],
               ),
@@ -536,11 +541,13 @@ class _ManageAuctionScreenState extends ConsumerState<ManageAuctionScreen> {
 class _LifecycleHero extends StatelessWidget {
   final String auctionId;
   final String status;
+  final int bidCount;
   final AdminInvoiceItem? invoice;
 
   const _LifecycleHero({
     required this.auctionId,
     required this.status,
+    required this.bidCount,
     required this.invoice,
   });
 
@@ -596,6 +603,10 @@ class _LifecycleHero extends StatelessWidget {
               _HeroMetric(
                 label: 'Invoice',
                 value: invoice == null ? 'Not created' : invoice!.status,
+              ),
+              _HeroMetric(
+                label: 'Bids',
+                value: '$bidCount',
               ),
               _HeroMetric(
                 label: 'Payment',

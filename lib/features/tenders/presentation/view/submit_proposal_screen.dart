@@ -4,6 +4,7 @@ import 'package:gov_auction_app/core/localization/app_localizations.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gov_auction_app/core/widgets/app_page_back_button.dart';
 
+import '../../data/models/tender.dart';
 import '../viewmodel/tenders_view_model.dart';
 
 class SubmitProposalScreen extends ConsumerStatefulWidget {
@@ -15,18 +16,20 @@ class SubmitProposalScreen extends ConsumerStatefulWidget {
       _SubmitProposalScreenState();
 }
 
-class _SubmitProposalScreenState
-    extends ConsumerState<SubmitProposalScreen> {
+class _SubmitProposalScreenState extends ConsumerState<SubmitProposalScreen> {
   final _amount = TextEditingController();
   bool loading = false;
   bool loadingLowest = true;
+  bool loadingTender = true;
   String? msg;
   num? currentLowest;
+  Tender? tender;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadTender();
       _loadCurrentLowest();
     });
   }
@@ -46,6 +49,31 @@ class _SubmitProposalScreenState
     final raw = _amount.text.trim();
     if (raw.isEmpty) return null;
     return num.tryParse(raw);
+  }
+
+  bool get _deadlinePassed =>
+      tender != null && !tender!.submissionDeadline.isAfter(DateTime.now());
+
+  Future<void> _loadTender() async {
+    setState(() {
+      loadingTender = true;
+    });
+
+    try {
+      final loadedTender =
+          await ref.read(tendersRepositoryProvider).getTenderById(widget.tenderId);
+      if (!mounted) return;
+      setState(() {
+        tender = loadedTender;
+        loadingTender = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        loadingTender = false;
+        msg = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
   }
 
   Future<void> _loadCurrentLowest() async {
@@ -73,6 +101,18 @@ class _SubmitProposalScreenState
   }
 
   Future<void> _submit() async {
+    if (_deadlinePassed) {
+      final error = context.tr(
+        'This tender is no longer accepting proposals because the submission deadline has passed.',
+        'لم تعد هذه المناقصة تقبل العروض لأن آخر موعد للتقديم قد انتهى.',
+      );
+      setState(() {
+        msg = error;
+      });
+      _toast(error);
+      return;
+    }
+
     final value = _parseAmount();
     if (value == null) {
       _toast(context.tr('Please enter a valid number', 'يرجى إدخال رقم صحيح'));
@@ -83,11 +123,10 @@ class _SubmitProposalScreenState
       return;
     }
     if (currentLowest != null && value >= currentLowest!) {
-      final error =
-          context.tr(
-            'Your offer must be lower than the current lowest price of EGP ${currentLowest!.toStringAsFixed(0)}.',
-            'يجب أن يكون عرضك أقل من أقل سعر حالي وهو ${context.l10n.t('EGP', 'ج.م')} ${currentLowest!.toStringAsFixed(0)}.',
-          );
+      final error = context.tr(
+        'Your offer must be lower than the current lowest price of EGP ${currentLowest!.toStringAsFixed(0)}.',
+        'يجب أن يكون عرضك أقل من أقل سعر حالي وهو ${context.l10n.t('EGP', 'ج.م')} ${currentLowest!.toStringAsFixed(0)}.',
+      );
       setState(() {
         msg = error;
       });
@@ -140,7 +179,12 @@ class _SubmitProposalScreenState
         actions: [
           IconButton(
             tooltip: context.tr('Refresh lowest offer', 'تحديث أقل عرض'),
-            onPressed: loadingLowest ? null : _loadCurrentLowest,
+            onPressed: loadingLowest || loadingTender
+                ? null
+                : () {
+                    _loadTender();
+                    _loadCurrentLowest();
+                  },
             icon: const Icon(Icons.refresh),
           ),
           const SizedBox(width: 6),
@@ -165,7 +209,7 @@ class _SubmitProposalScreenState
                         children: [
                           Text(
                             context.tr('Current Lowest Offer', 'أقل عرض حالي'),
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontWeight: FontWeight.w900,
                               fontSize: 15,
                             ),
@@ -200,25 +244,71 @@ class _SubmitProposalScreenState
                 ),
               ),
             ),
+            if (loadingTender) ...[
+              const SizedBox(height: 12),
+              const LinearProgressIndicator(minHeight: 3),
+            ] else if (_deadlinePassed) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFB3261E).withOpacity(.08),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: const Color(0xFFB3261E).withOpacity(.24),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.lock_clock_outlined,
+                      color: Color(0xFFB3261E),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        context.tr(
+                          'Submission is closed because the deadline has passed.',
+                          'تم إغلاق التقديم لأن آخر موعد قد انتهى.',
+                        ),
+                        style: const TextStyle(
+                          color: Color(0xFFB3261E),
+                          fontWeight: FontWeight.w700,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             TextField(
               controller: _amount,
+              enabled: !loadingTender && !_deadlinePassed,
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
               decoration: InputDecoration(
                 labelText: context.tr('Lowest price (EGP)', 'أقل سعر (ج.م)'),
-                prefixIcon: Icon(Icons.payments),
+                prefixIcon: const Icon(Icons.payments),
                 hintText: context.tr('e.g. 250000', 'مثال: 250000'),
               ),
-              onSubmitted: (_) => loading || loadingLowest ? null : _submit(),
+              onSubmitted: (_) =>
+                  loading || loadingLowest || loadingTender || _deadlinePassed
+                      ? null
+                      : _submit(),
             ),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               height: 48,
               child: FilledButton(
-                onPressed: loading || loadingLowest ? null : _submit,
+                onPressed: loading || loadingLowest || loadingTender || _deadlinePassed
+                    ? null
+                    : _submit,
                 child: loading
                     ? const SizedBox(
                         width: 18,

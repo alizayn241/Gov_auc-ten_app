@@ -29,6 +29,8 @@ class _TenderDetailsScreenState extends ConsumerState<TenderDetailsScreen> {
   Widget build(BuildContext context) {
     final st = ref.watch(tenderDetailsViewModelProvider(widget.tenderId));
     final auth = ref.watch(authViewModelProvider);
+    final deadlinePassed =
+        st.tender != null && !st.tender!.submissionDeadline.isAfter(DateTime.now());
 
     return Scaffold(
       appBar: AppBar(
@@ -67,8 +69,20 @@ class _TenderDetailsScreenState extends ConsumerState<TenderDetailsScreen> {
                       isAuthenticated: auth.isAuthenticated,
                       participation: st.participation,
                       isAdmin: auth.isAdmin,
+                      deadlinePassed: deadlinePassed,
                     ),
                     const SizedBox(height: 14),
+                    if (deadlinePassed) ...[
+                      _InlineMessage(
+                        message: context.tr(
+                          'Participation is closed because the submission deadline has passed.',
+                          'تم إغلاق المشاركة لأن آخر موعد للتقديم قد انتهى.',
+                        ),
+                        accent: const Color(0xFFB3261E),
+                        icon: Icons.lock_clock_outlined,
+                      ),
+                      const SizedBox(height: 14),
+                    ],
                     if (st.error != null && st.error!.isNotEmpty) ...[
                       _InlineMessage(
                         message: st.error!,
@@ -87,7 +101,9 @@ class _TenderDetailsScreenState extends ConsumerState<TenderDetailsScreen> {
                         ),
                       ),
                       const SizedBox(height: 10),
-                    ] else if (!auth.isAdmin && st.participation == null) ...[
+                    ] else if (!auth.isAdmin &&
+                        st.participation == null &&
+                        !deadlinePassed) ...[
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
@@ -144,7 +160,8 @@ class _TenderDetailsScreenState extends ConsumerState<TenderDetailsScreen> {
                       width: double.infinity,
                       child: FilledButton.icon(
                         onPressed: auth.isAdmin ||
-                                !(st.participation?.eligible ?? false)
+                                !(st.participation?.eligible ?? false) ||
+                                deadlinePassed
                             ? null
                             : () => context.go('/tender/${st.tender!.id}/submit'),
                         icon: const Icon(Icons.upload_file),
@@ -275,12 +292,14 @@ class _TenderInfoLine extends StatelessWidget {
 class _ActionInfoCard extends StatelessWidget {
   final bool isAuthenticated;
   final bool isAdmin;
+  final bool deadlinePassed;
   final TenderParticipation? participation;
 
   const _ActionInfoCard({
     required this.isAuthenticated,
     required this.participation,
     required this.isAdmin,
+    required this.deadlinePassed,
   });
 
   @override
@@ -289,7 +308,9 @@ class _ActionInfoCard extends StatelessWidget {
     final hasParticipation = participation != null;
     final eligible = participation?.eligible == true;
     final status = (participation?.status ?? '').toString().toLowerCase();
-    final subtitle = isAdmin
+    final subtitle = deadlinePassed
+        ? 'The submission deadline has passed. New participation requests and lowest-price offers are no longer accepted for this tender.'
+        : isAdmin
         ? 'Admin accounts can review tender activity, but cannot submit vendor proposals.'
         : !isAuthenticated
             ? 'Sign in first, then request participation before submitting your lowest price offer.'

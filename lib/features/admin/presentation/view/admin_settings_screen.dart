@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../../core/localization/app_localizations.dart';
 import '../../../../core/localization/locale_controller.dart';
 import '../../../../core/theme/theme_mode_controller.dart';
+import '../../../../core/widgets/app_page_back_button.dart';
+import 'settings/settings_widgets.dart';
 
 class AdminSettingsScreen extends ConsumerStatefulWidget {
   const AdminSettingsScreen({super.key});
@@ -27,21 +28,16 @@ class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.systemSettings),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () =>
-              context.canPop() ? context.pop() : context.go('/home'),
-        ),
+        leading: const AppPageBackButton(fallbackRoute: '/admin'),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _Hint(
+          AdminSettingsHint(
             title: l10n.platformConfiguration,
             subtitle: l10n.platformConfigurationSubtitle,
           ),
           const SizedBox(height: 12),
-
           Card(
             child: Column(
               children: [
@@ -87,31 +83,27 @@ class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
               ],
             ),
           ),
-
           const SizedBox(height: 12),
-
           Card(
             child: Column(
               children: [
                 SwitchListTile(
                   value: _maintenance,
-                  onChanged: (v) => setState(() => _maintenance = v),
+                  onChanged: (value) => setState(() => _maintenance = value),
                   title: Text(l10n.maintenanceMode),
                   subtitle: Text(l10n.maintenanceModeSubtitle),
                 ),
                 const Divider(height: 0),
                 SwitchListTile(
                   value: _require2fa,
-                  onChanged: (v) => setState(() => _require2fa = v),
+                  onChanged: (value) => setState(() => _require2fa = value),
                   title: Text(l10n.require2fa),
                   subtitle: Text(l10n.require2faSubtitle),
                 ),
               ],
             ),
           ),
-
           const SizedBox(height: 12),
-
           FilledButton.icon(
             onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text(l10n.savedDemo)),
@@ -132,48 +124,5 @@ class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
   void _onLocaleChanged(Locale? locale) {
     if (locale == null) return;
     ref.read(localeProvider.notifier).updateLocale(locale);
-  }
-}
-
-class _Hint extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  const _Hint({required this.title, required this.subtitle});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            const Icon(Icons.settings_outlined),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
